@@ -19,8 +19,18 @@ REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 stripe.api_key = STRIPE_SECRET_KEY
 
 # Clients
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+try:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception as e:
+    print(f"Supabase init error: {e}")
+    supabase = None
+
+try:
+    redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+    redis_client.ping()
+except Exception as e:
+    print(f"Redis init error: {e}")
+    redis_client = None
 
 app = FastAPI(title="ViralClip AI SaaS")
 
@@ -57,24 +67,26 @@ async def generate_clip(payload: ClipRequest, request: Request):
     if user["free_clip_used"] and user["license"] == "free_tier":
         raise HTTPException(status_code=402, detail="Free trial clip used. Upgrade required.")
 
-    # Create job ID and queue job
+    # Create job ID and store status in Redis
+    import threading
     job_id = str(uuid.uuid4())
-    redis_client.hset(f"job:{job_id}", mapping={
-        "status": "queued",
-        "progress": 0,
-        "message": "Job queued for processing...",
-        "url": ""
-    })
-    redis_client.expire(f"job:{job_id}", 86400) # 24h expiration
-
-    # Import RQ queue locally to push job to Redis worker
-    from rq import Queue
-    q = Queue(connection=redis_client)
-    q.enqueue("worker.run_clip_pipeline", payload.niche, user_id, job_id)
+    if redis_client:
+        redis_client.hset(f"job:{job_id}", mapping={
+            "status": "queued",
+            "progress": 0,
+            "message": "Job queued for processing...",
+            "url": ""
+        })
+        redis_client.expire(f"job:{job_id}", 86400)
 
     # Mark free clip as used if on free tier
-    if user["license"] == "free_tier":
+    if supabase and user["license"] == "free_tier":
         supabase.table("users").update({"free_clip_used": True}).eq("id", user_id).execute()
+
+    # Run pipeline in background thread (worker process handles heavy lifting)
+    from worker import run_clip_pipeline
+    thread = threading.Thread(target=run_clip_pipeline, args=(payload.niche, user_id, job_id), daemon=True)
+    thread.start()
 
     return {"status": "success", "job_id": job_id}
 
