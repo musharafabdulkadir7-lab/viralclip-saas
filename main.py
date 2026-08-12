@@ -45,13 +45,18 @@ class ClipRequest(BaseModel):
 
 # Helper functions
 def get_or_create_user(user_id: str):
-    res = supabase.table("users").select("*").eq("id", user_id).execute()
-    if res.data:
-        return res.data[0]
-    
-    new_user = {"id": user_id, "free_clip_used": False, "license": "free_tier"}
-    supabase.table("users").insert(new_user).execute()
-    return new_user
+    if not supabase:
+        return {"id": user_id, "free_clip_used": False, "license": "free_tier"}
+    try:
+        res = supabase.table("users").select("*").eq("id", user_id).execute()
+        if res.data:
+            return res.data[0]
+        new_user = {"id": user_id, "free_clip_used": False, "license": "free_tier"}
+        supabase.table("users").insert(new_user).execute()
+        return new_user
+    except Exception as e:
+        print(f"DB error for user {user_id}: {e}")
+        return {"id": user_id, "free_clip_used": False, "license": "free_tier"}
 
 @app.get("/")
 async def render_index(request: Request):
