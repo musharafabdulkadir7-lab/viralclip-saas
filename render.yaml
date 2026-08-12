@@ -15,4 +15,4 @@ services:
       - key: SUPABASE_KEY
         sync: false
       - key: REDIS_URL
-        sync: false
+        value: rediss://default:gQAAAAAAApcdAAIgcDE2NGRkM2M5ODQzNzQ0OWFjOWM1ZmE1NmJlODY5Mzk5Yw@allowed-corgi-169757.upstash.io:6379
