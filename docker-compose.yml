@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    command: uvicorn main:app --host 0.0.0.0 --port 8080
+    ports:
+      - "8080:8080"
+    environment:
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+    restart: always
+
+  worker:
+    build: .
+    command: python worker.py
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'      # Cap to 2 CPU cores max to prevent server locking
+          memory: 2G       # Cap to 2 GB RAM max to prevent OOM cascade crashes
+    restart: always      # Automatically restart if FFmpeg OOMs
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    restart: always
