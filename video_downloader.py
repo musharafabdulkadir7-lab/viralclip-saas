@@ -25,6 +25,18 @@ def _get_ffmpeg_dir() -> str:
         return "/usr/bin"
 
 
+def _write_cookies_file() -> str:
+    """Write YOUTUBE_COOKIES env var to a temp file for yt-dlp to use."""
+    cookies_content = os.environ.get("YOUTUBE_COOKIES", "")
+    if not cookies_content:
+        return ""
+    cookies_path = "/tmp/youtube_cookies.txt"
+    with open(cookies_path, "w") as f:
+        f.write(cookies_content)
+    print("[Downloader] Using YouTube cookies from environment.")
+    return cookies_path
+
+
 def download_video_and_subs(url: str, video_id: str) -> dict:
     """
     Downloads the video at 720p and its auto-generated subtitles.
@@ -33,6 +45,7 @@ def download_video_and_subs(url: str, video_id: str) -> dict:
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     output_template = os.path.join(DOWNLOAD_DIR, f"{video_id}.%(ext)s")
     ffmpeg_dir = _get_ffmpeg_dir()
+    cookies_file = _write_cookies_file()
 
     print(f"[Downloader] Downloading video: {url}")
     print(f"[Downloader] Using ffmpeg from: {ffmpeg_dir or 'system PATH'}")
@@ -50,6 +63,8 @@ def download_video_and_subs(url: str, video_id: str) -> dict:
 
     if ffmpeg_dir:
         ydl_opts["ffmpeg_location"] = ffmpeg_dir
+    if cookies_file:
+        ydl_opts["cookiefile"] = cookies_file
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
