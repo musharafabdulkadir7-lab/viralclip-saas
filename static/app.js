@@ -59,6 +59,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!document.cookie.split('; ').find(r => r.startsWith('user_id='))) {
         document.cookie = `user_id=user_${Math.floor(Math.random()*100000)}; path=/; max-age=31536000`;
     }
+
+    // Resume polling if a job was running before page refresh
+    const activeJobId = localStorage.getItem('active_job_id');
+    if (activeJobId) {
+        const runClipBtn = document.getElementById('run-clip-farm-btn');
+        runClipBtn.disabled = true;
+        runClipBtn.textContent = '⏳ Running...';
+        startStatusPolling(activeJobId);
+    }
 });
 
 // ─── Toast Notification ───────────────────────────────────────────────────────
@@ -117,6 +126,7 @@ function startStatusPolling(jobId) {
 
             if (data.progress >= 100 || data.status === 'complete' || data.status === 'error') {
                 clearInterval(pollingInterval);
+                localStorage.removeItem('active_job_id');
                 runClipBtn.disabled = false;
                 runClipBtn.textContent = '▶️ Find & Post Clip Now';
                 setTimeout(() => progressContainer.classList.add('hidden'), 4000);
@@ -130,6 +140,7 @@ function startStatusPolling(jobId) {
         } catch (e) {
             console.error(e);
             clearInterval(pollingInterval);
+            localStorage.removeItem('active_job_id');
             runClipBtn.disabled = false;
             runClipBtn.textContent = '▶️ Find & Post Clip Now';
         }
@@ -167,6 +178,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const data = await res.json();
             if (data.job_id) {
+                localStorage.setItem('active_job_id', data.job_id);
                 addMessage('Director AI', `🔍 Starting pipeline for **${niche}**.\n\nWatch the progress bar above!`, 'ai-message');
                 startStatusPolling(data.job_id);
             } else {
