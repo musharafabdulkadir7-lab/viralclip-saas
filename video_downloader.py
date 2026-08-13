@@ -51,7 +51,8 @@ def download_video_and_subs(url: str, video_id: str) -> dict:
     print(f"[Downloader] Using ffmpeg from: {ffmpeg_dir or 'system PATH'}")
 
     ydl_opts = {
-        "format": "best[height<=720][ext=mp4]/best[ext=mp4]/best",
+        # Try 720p mp4 → any mp4 → best available single file → absolute best
+        "format": "bestvideo[height<=720]+bestaudio/best[height<=720]/bestvideo+bestaudio/best",
         "outtmpl": output_template,
         "writeautomaticsub": True,
         "subtitleslangs": ["en"],
@@ -59,6 +60,7 @@ def download_video_and_subs(url: str, video_id: str) -> dict:
         "quiet": False,
         "no_warnings": False,
         "noplaylist": True,
+        "merge_output_format": "mp4",
     }
 
     if ffmpeg_dir:
@@ -73,12 +75,11 @@ def download_video_and_subs(url: str, video_id: str) -> dict:
         print(f"[Downloader] Download error: {e}")
         return {"error": str(e)}
 
-    # Find downloaded files
+    # Find downloaded files — check mp4 first, then any video file
     video_files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}.mp4"))
     if not video_files:
-        # Also check for webm or other formats
-        video_files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}.*"))
-        video_files = [f for f in video_files if not f.endswith('.vtt') and not f.endswith('.json')]
+        all_files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}.*"))
+        video_files = [f for f in all_files if not any(f.endswith(ext) for ext in ['.vtt', '.json', '.srt', '.ytdl'])]
 
     sub_files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}*.vtt"))
 
