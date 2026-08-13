@@ -163,26 +163,21 @@ import google_auth_oauthlib.flow
 async def auth_youtube(request: Request):
     user_id = request.cookies.get("user_id", "demo_user_123")
     
-    client_config = {
-        "web": {
-            "client_id": GOOGLE_CLIENT_ID,
-            "client_secret": GOOGLE_CLIENT_SECRET,
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-        }
+    import urllib.parse
+    import uuid
+    state = str(uuid.uuid4())
+    
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope": " ".join(YOUTUBE_SCOPES),
+        "access_type": "offline",
+        "prompt": "consent",
+        "state": state
     }
     
-    flow = google_auth_oauthlib.flow.Flow.from_client_config(
-        client_config,
-        scopes=YOUTUBE_SCOPES
-    )
-    flow.redirect_uri = GOOGLE_REDIRECT_URI
-    
-    authorization_url, state = flow.authorization_url(
-        access_type="offline",
-        include_granted_scopes="true",
-        prompt="consent"
-    )
+    authorization_url = "https://accounts.google.com/o/oauth2/auth?" + urllib.parse.urlencode(params)
     
     # Store state in redis with user_id to verify later
     if redis_client:
