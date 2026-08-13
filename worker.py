@@ -72,7 +72,8 @@ def run_clip_pipeline(niche: str, user_id: str, job_id: str):
                 break
 
         if not video or not dl.get("video_path"):
-            update_job_status(job_id, "error", 0, "All candidates failed to download.")
+            err = dl.get("error", "Unknown download error")
+            update_job_status(job_id, "error", 0, f"Download failed: {err}")
             return
 
         update_job_status(job_id, "running", 50, "AI is finding the best segment...")
