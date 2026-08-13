@@ -227,5 +227,7 @@ async def auth_youtube_callback(request: Request, state: str = None, code: str =
             
         return RedirectResponse("/?youtube=connected")
     except Exception as e:
+        import urllib.parse
+        error_msg = urllib.parse.quote(str(e))
         print(f"OAuth Error: {e}")
-        return RedirectResponse("/?youtube=error")
+        return RedirectResponse(f"/?youtube=error&detail={error_msg}")
