@@ -115,6 +115,8 @@ async def generate_clip(payload: ClipRequest, request: Request):
 
 @app.get("/api/v1/job-status/{job_id}")
 async def get_job_status(job_id: str):
+    if not redis_client:
+        return {"status": "idle", "progress": 0, "message": "Redis not connected"}
     job_data = redis_client.hgetall(f"job:{job_id}")
     if not job_data:
         return {"status": "idle", "progress": 0, "message": "Job not found"}
