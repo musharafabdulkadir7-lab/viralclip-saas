@@ -197,33 +197,38 @@ async def auth_youtube_callback(request: Request, state: str = None, code: str =
         
     user_id = redis_client.get(f"oauth_state:{state}") if redis_client else "demo_user_123"
     
-    client_config = {
-        "web": {
+    try:
+        import httpx
+        token_data = {
             "client_id": GOOGLE_CLIENT_ID,
             "client_secret": GOOGLE_CLIENT_SECRET,
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": GOOGLE_REDIRECT_URI
         }
-    }
-    
-    flow = google_auth_oauthlib.flow.Flow.from_client_config(
-        client_config,
-        scopes=YOUTUBE_SCOPES,
-        state=state
-    )
-    flow.redirect_uri = GOOGLE_REDIRECT_URI
-    
-    try:
-        flow.fetch_token(code=code)
-        credentials = flow.credentials
+        
+        # Exchange authorization code for tokens
+        with httpx.Client() as client:
+            r = client.post("https://oauth2.googleapis.com/token", data=token_data)
+            
+        if r.status_code != 200:
+            raise Exception(f"Google Token API returned {r.status_code}: {r.text}")
+            
+        token_json = r.json()
+        access_token = token_json.get("access_token")
+        refresh_token = token_json.get("refresh_token")
         
         # Save to Supabase
         if supabase:
-            supabase.table("users").update({
-                "youtube_access_token": credentials.token,
-                "youtube_refresh_token": credentials.refresh_token,
+            update_data = {
+                "youtube_access_token": access_token,
                 "youtube_connected": True
-            }).eq("id", user_id).execute()
+            }
+            # Only update refresh_token if Google actually sent one (it only sends on first consent)
+            if refresh_token:
+                update_data["youtube_refresh_token"] = refresh_token
+                
+            supabase.table("users").update(update_data).eq("id", user_id).execute()
             
         return RedirectResponse("/?youtube=connected")
     except Exception as e:
