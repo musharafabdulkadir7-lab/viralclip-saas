@@ -102,9 +102,30 @@ def run_clip_pipeline(niche: str, user_id: str, job_id: str):
         title = f"#Shorts {caption} (Part 1) #{niche.replace(' ', '')}"
         desc = f"{caption} - Part 1\n\n#Shorts #{niche.replace(' ', '')} #viral"
 
+        # Fetch credentials from Supabase
+        from supabase import create_client
+        supabase_url = os.environ.get("SUPABASE_URL", "")
+        supabase_key = os.environ.get("SUPABASE_KEY", "")
+        creds_dict = None
+        if supabase_url and supabase_key:
+            sb = create_client(supabase_url, supabase_key)
+            res = sb.table("users").select("youtube_access_token, youtube_refresh_token").eq("id", user_id).execute()
+            if res.data and res.data[0].get("youtube_refresh_token"):
+                creds_dict = {
+                    "token": res.data[0].get("youtube_access_token"),
+                    "refresh_token": res.data[0].get("youtube_refresh_token"),
+                    "client_id": os.environ.get("GOOGLE_CLIENT_ID", ""),
+                    "client_secret": os.environ.get("GOOGLE_CLIENT_SECRET", "")
+                }
+
+        if not creds_dict:
+            update_job_status(job_id, "error", 100, "YouTube account not connected. Please connect your account in Settings.")
+            return
+
         upload_res = youtube_uploader.upload_video_to_youtube(
             clip_paths[0], title=title, description=desc,
-            tags=["Shorts", niche, "viral", "part1"]
+            tags=["Shorts", niche, "viral", "part1"],
+            creds_dict=creds_dict
         )
 
         if upload_res.get("status") == "success":

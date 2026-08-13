@@ -16,6 +16,11 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://your-supabase-url.supabas
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "your-supabase-service-key")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
+# Google OAuth Config
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "https://viralclip-saas.onrender.com/api/v1/auth/youtube/callback")
+YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 stripe.api_key = STRIPE_SECRET_KEY
 
 # Clients
@@ -150,3 +155,77 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
             supabase.table("users").update({"license": "lifetime"}).eq("id", user_id).execute()
 
     return {"status": "success"}
+
+from fastapi.responses import RedirectResponse
+import google_auth_oauthlib.flow
+
+@app.get("/api/v1/auth/youtube")
+async def auth_youtube(request: Request):
+    user_id = request.cookies.get("user_id", "demo_user_123")
+    
+    client_config = {
+        "web": {
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }
+    }
+    
+    flow = google_auth_oauthlib.flow.Flow.from_client_config(
+        client_config,
+        scopes=YOUTUBE_SCOPES
+    )
+    flow.redirect_uri = GOOGLE_REDIRECT_URI
+    
+    authorization_url, state = flow.authorization_url(
+        access_type="offline",
+        include_granted_scopes="true",
+        prompt="consent"
+    )
+    
+    # Store state in redis with user_id to verify later
+    if redis_client:
+        redis_client.setex(f"oauth_state:{state}", 600, user_id)
+        
+    return RedirectResponse(authorization_url)
+
+@app.get("/api/v1/auth/youtube/callback")
+async def auth_youtube_callback(request: Request, state: str = None, code: str = None):
+    if not state or not code:
+        return {"error": "Missing state or code"}
+        
+    user_id = redis_client.get(f"oauth_state:{state}") if redis_client else "demo_user_123"
+    
+    client_config = {
+        "web": {
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }
+    }
+    
+    flow = google_auth_oauthlib.flow.Flow.from_client_config(
+        client_config,
+        scopes=YOUTUBE_SCOPES,
+        state=state
+    )
+    flow.redirect_uri = GOOGLE_REDIRECT_URI
+    
+    try:
+        flow.fetch_token(code=code)
+        credentials = flow.credentials
+        
+        # Save to Supabase
+        if supabase:
+            supabase.table("users").update({
+                "youtube_access_token": credentials.token,
+                "youtube_refresh_token": credentials.refresh_token,
+                "youtube_connected": True
+            }).eq("id", user_id).execute()
+            
+        return RedirectResponse("/?youtube=connected")
+    except Exception as e:
+        print(f"OAuth Error: {e}")
+        return RedirectResponse("/?youtube=error")

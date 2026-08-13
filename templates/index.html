@@ -19,6 +19,16 @@
             <div class="control-panel">
                 <h3>System Controls</h3>
 
+                <!-- YouTube Integration -->
+                <div class="niche-section" style="margin-bottom: 20px;">
+                    <label>YouTube Account</label>
+                    <div id="youtube-status-container" style="display: flex; align-items: center; gap: 10px; margin-top: 5px;">
+                        <span id="youtube-indicator" class="dot" style="background: #ef4444;"></span>
+                        <span id="youtube-status-text" style="font-size: 14px; color: #94a3b8;">Not Connected</span>
+                    </div>
+                    <a href="/api/v1/auth/youtube" id="connect-youtube-btn" class="run-clip-btn" style="background: #ef4444; margin-top: 10px; text-decoration: none; display: block; text-align: center;">🔗 Connect YouTube</a>
+                </div>
+
                 <!-- Niche Input -->
                 <div id="niche-section" class="niche-section">
                     <label for="niche-input">Niche / Topic</label>
