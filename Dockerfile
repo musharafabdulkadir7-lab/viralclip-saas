@@ -9,8 +9,8 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Fix ImageMagick policy to allow TextClip generation in moviepy
-RUN sed -i 's/none/read,write/g' /etc/ImageMagick-6/policy.xml
+# Fix ImageMagick policy to allow TextClip generation in moviepy (handles IM6 and IM7)
+RUN find /etc/ImageMagick* -name policy.xml -exec sed -i 's/none/read,write/g' {} \; 2>/dev/null || true
 
 # Set working directory
 WORKDIR /app
