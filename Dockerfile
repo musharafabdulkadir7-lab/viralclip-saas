@@ -1,11 +1,16 @@
 FROM python:3.11-slim
 
-# Install system dependencies (ffmpeg for video processing)
+# Install system dependencies (ffmpeg for video processing, imagemagick for subtitles)
 RUN apt-get update && apt-get install -y \
     ffmpeg \
+    imagemagick \
+    fonts-liberation \
     git \
     curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Fix ImageMagick policy to allow TextClip generation in moviepy
+RUN sed -i 's/none/read,write/g' /etc/ImageMagick-6/policy.xml
 
 # Set working directory
 WORKDIR /app
