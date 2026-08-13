@@ -67,6 +67,19 @@ def get_or_create_user(user_id: str):
 async def render_index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
+@app.get("/api/v1/auth/youtube/status")
+async def youtube_status(request: Request):
+    user_id = request.cookies.get("user_id", "demo_user_123")
+    if not supabase:
+        return {"connected": False}
+    try:
+        res = supabase.table("users").select("youtube_connected, youtube_refresh_token").eq("id", user_id).execute()
+        if res.data and res.data[0].get("youtube_refresh_token"):
+            return {"connected": True}
+    except Exception as e:
+        print(f"Status check error: {e}")
+    return {"connected": False}
+
 @app.post("/api/v1/generate-clip")
 async def generate_clip(payload: ClipRequest, request: Request):
     # Retrieve user ID (mock session ID for demonstration)

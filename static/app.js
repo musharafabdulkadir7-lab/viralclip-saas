@@ -28,22 +28,32 @@ function updateYouTubeUI(connected) {
 }
 
 // ─── On Page Load ─────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
 
     // Check if Google just redirected back with ?youtube=connected
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('youtube') === 'connected') {
         localStorage.setItem('youtube_connected', 'true');
         window.history.replaceState({}, document.title, window.location.pathname);
-        // Show a success toast
         showToast('✅ YouTube connected successfully!', '#10b981');
     } else if (urlParams.get('youtube') === 'error') {
         showToast('❌ YouTube connection failed. Please try again.', '#ef4444');
         window.history.replaceState({}, document.title, window.location.pathname);
     }
 
-    const isYouTubeConnected = localStorage.getItem('youtube_connected') === 'true';
-    updateYouTubeUI(isYouTubeConnected);
+    // Always verify against the server — localStorage can lie
+    try {
+        const res = await fetch('/api/v1/auth/youtube/status');
+        const data = await res.json();
+        if (data.connected) {
+            localStorage.setItem('youtube_connected', 'true');
+        }
+        updateYouTubeUI(data.connected);
+    } catch (e) {
+        // Fallback to localStorage if server unreachable
+        const cached = localStorage.getItem('youtube_connected') === 'true';
+        updateYouTubeUI(cached);
+    }
 
     // Assign unique user ID cookie if not exists
     if (!document.cookie.split('; ').find(r => r.startsWith('user_id='))) {
