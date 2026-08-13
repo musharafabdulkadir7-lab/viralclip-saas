@@ -2,7 +2,6 @@ import os
 import sys
 import pathlib
 import redis
-from rq import Worker, Queue, Connection
 
 # Setup paths so the worker can find the AI Agent scripts
 current_dir = pathlib.Path(__file__).parent.resolve()
