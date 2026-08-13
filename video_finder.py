@@ -11,30 +11,23 @@ import random
 from datetime import datetime, timedelta
 
 USED_VIDEOS_FILE = "used_videos.json"
-MIN_VIEWS = 500_000     # Must have at least 500K views
-MIN_DURATION = 600      # At least 10 minutes
+MIN_VIEWS = 50_000      # Must have at least 50K views
+MIN_DURATION = 300      # At least 5 minutes
 MAX_AGE_DAYS = 730      # Within the last 2 years
 TOP_N = 3               # Return top N candidates so pipeline can retry on 403
 
-# Varied search phrases for content diversity
+# Generic viral search suffixes
 SEARCH_SUFFIXES = [
-    "motivational speech",
-    "life advice",
-    "how to get rich",
-    "financial freedom speech",
-    "success mindset",
-    "money habits",
-    "millionaire mindset talk",
-    "build wealth advice",
-    "never give up speech",
-    "self improvement talk",
-    "powerful speech",
-    "inspiring talk",
-    "entrepreneurship advice",
-    "wealth building",
+    "viral",
+    "highlights",
+    "best moments",
+    "funny moments",
+    "trending",
+    "podcast",
+    "interview",
+    "compilation",
+    "" # empty string for exact match
 ]
-
-
 def _safe(text: str) -> str:
     """Remove characters that can't print on Windows console (cp1252)."""
     return text.encode("ascii", errors="replace").decode("ascii")
@@ -152,7 +145,7 @@ def _search(niche: str, max_results: int) -> list:
                         continue
                     dur = entry.get("duration") or 0
                     views = entry.get("view_count") or 0
-                    if dur >= 300 and views >= 100_000:
+                    if dur >= 120 and views >= 10_000:
                         url = entry.get("webpage_url") or f"https://www.youtube.com/watch?v={vid_id}"
                         candidates.append({
                             "url": url,
