@@ -93,6 +93,7 @@ def _search(niche: str, max_results: int) -> list:
     ydl_opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "skip_download": True}
 
     candidates = []
+    last_error = None
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -133,6 +134,7 @@ def _search(niche: str, max_results: int) -> list:
                 })
 
     except Exception as e:
+        last_error = str(e)
         log(f"[VideoFinder] Search error: {e}")
 
     # Relaxed fallback if strict filter returns nothing
@@ -161,10 +163,13 @@ def _search(niche: str, max_results: int) -> list:
                             "id": vid_id,
                         })
         except Exception as e:
+            last_error = str(e)
             log(f"[VideoFinder] Fallback error: {e}")
 
     if not candidates:
         log("[VideoFinder] No suitable videos found.")
+        if last_error:
+            raise Exception(f"YouTube search failed: {last_error}")
         return []
 
     # Sort by views descending — highest viewed = most trending

@@ -58,7 +58,7 @@ def run_clip_pipeline(niche: str, user_id: str, job_id: str):
         update_job_status(job_id, "running", 10, "Searching for viral videos...")
         candidates = video_finder.find_viral_videos(niche=niche)
         if not candidates:
-            update_job_status(job_id, "error", 0, "No viral video found.")
+            update_job_status(job_id, "error", 0, "No viral video found matching criteria.")
             return
 
         video = None
@@ -138,9 +138,3 @@ def run_clip_pipeline(niche: str, user_id: str, job_id: str):
         update_job_status(job_id, "error", 0, f"Critical Pipeline Error: {str(e)}")
         raise e
 
-if __name__ == "__main__":
-    print("Starting RQ Worker for 'default' queue...")
-    redis_conn = _get_redis()
-    with Connection(redis_conn):
-        worker = Worker(map(Queue, ["default"]))
-        worker.work()
