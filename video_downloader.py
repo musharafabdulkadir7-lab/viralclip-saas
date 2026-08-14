@@ -51,16 +51,21 @@ def download_video_and_subs(url: str, video_id: str) -> dict:
     print(f"[Downloader] Using ffmpeg from: {ffmpeg_dir or 'system PATH'}")
 
     ydl_opts = {
-        # Try 720p mp4 → any mp4 → best available single file → absolute best
-        "format": "bestvideo[height<=720]+bestaudio/best[height<=720]/bestvideo+bestaudio/best",
+        # 480p is plenty for a short clip and downloads ~2x faster than 720p
+        "format": "bestvideo[height<=480]+bestaudio/best[height<=480]/bestvideo+bestaudio/best",
         "outtmpl": output_template,
         "writeautomaticsub": True,
         "subtitleslangs": ["en"],
         "subtitlesformat": "vtt",
-        "quiet": False,
-        "no_warnings": False,
+        "quiet": True,
+        "no_warnings": True,
         "noplaylist": True,
         "merge_output_format": "mp4",
+        # Speed: use 8 parallel fragment downloads
+        "concurrent_fragment_downloads": 8,
+        # Only download first 12 minutes — we only need a short clip
+        "download_ranges": lambda info, *args: [{"start_time": 0, "end_time": 720}],
+        "force_keyframes_at_cuts": True,
     }
 
     if ffmpeg_dir:
