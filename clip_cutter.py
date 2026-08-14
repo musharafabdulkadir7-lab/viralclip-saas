@@ -14,13 +14,23 @@ Anti-"Unoriginal Content" measures applied:
 """
 import subprocess
 import os
+import sys
 import time
-import imageio_ffmpeg
 
 OUTPUT_DIR = "generated_videos"
 
-# Dynamically locate the bundled ffmpeg binary
-FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
+# Dynamically locate ffmpeg: system on Linux, bundled on Windows
+def _get_ffmpeg() -> str:
+    if sys.platform == "win32":
+        try:
+            import imageio_ffmpeg
+            return imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            return "ffmpeg"
+    else:
+        return "/usr/bin/ffmpeg"
+
+FFMPEG = _get_ffmpeg()
 
 # Channel watermark text — buyers should change this to their channel name
 WATERMARK_TEXT = "@FinanceClips"

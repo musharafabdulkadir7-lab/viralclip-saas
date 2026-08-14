@@ -11,18 +11,16 @@ import sys
 DOWNLOAD_DIR = "downloaded_videos"
 
 
-def _get_ffmpeg_dir() -> str:
-    """Auto-detect ffmpeg location: system on Linux, bundled on Windows."""
+def _get_ffmpeg_exe() -> str:
+    """Auto-detect ffmpeg exe: bundled on Windows, system on Linux."""
     if sys.platform == "win32":
         try:
             import imageio_ffmpeg
-            exe = imageio_ffmpeg.get_ffmpeg_exe()
-            return os.path.dirname(exe)
+            return imageio_ffmpeg.get_ffmpeg_exe()
         except Exception:
-            return ""
+            return "ffmpeg"
     else:
-        # On Linux (Render), ffmpeg is installed system-wide via apt
-        return "/usr/bin"
+        return "/usr/bin/ffmpeg"
 
 
 def _write_cookies_file() -> str:
@@ -30,7 +28,7 @@ def _write_cookies_file() -> str:
     cookies_content = os.environ.get("YOUTUBE_COOKIES", "")
     if not cookies_content:
         return ""
-    cookies_path = "/tmp/youtube_cookies.txt"
+    cookies_path = "/tmp/youtube_cookies.txt" if sys.platform != "win32" else os.path.join(os.environ.get("TEMP", "."), "youtube_cookies.txt")
     with open(cookies_path, "w") as f:
         f.write(cookies_content)
     print("[Downloader] Using YouTube cookies from environment.")
@@ -44,14 +42,19 @@ def download_video_and_subs(url: str, video_id: str) -> dict:
     """
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     output_template = os.path.join(DOWNLOAD_DIR, f"{video_id}.%(ext)s")
-    ffmpeg_dir = _get_ffmpeg_dir()
+    ffmpeg_exe = _get_ffmpeg_exe()
     cookies_file = _write_cookies_file()
 
     print(f"[Downloader] Downloading video: {url}")
-    print(f"[Downloader] Using ffmpeg from: {ffmpeg_dir or 'system PATH'}")
+    print(f"[Downloader] Using ffmpeg: {ffmpeg_exe}")
+
+    # Add ffmpeg directory to PATH so yt-dlp's download_ranges can find it
+    ffmpeg_dir = os.path.dirname(ffmpeg_exe)
+    if ffmpeg_dir and ffmpeg_dir not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
 
     ydl_opts = {
-        # 480p is plenty for a short clip and downloads ~2x faster than 720p
+        # 480p downloads ~2x faster than 720p — still fine for Shorts
         "format": "bestvideo[height<=480]+bestaudio/best[height<=480]/bestvideo+bestaudio/best",
         "outtmpl": output_template,
         "writeautomaticsub": True,
@@ -63,13 +66,9 @@ def download_video_and_subs(url: str, video_id: str) -> dict:
         "merge_output_format": "mp4",
         # Speed: use 8 parallel fragment downloads
         "concurrent_fragment_downloads": 8,
-        # Only download first 12 minutes — we only need a short clip
-        "download_ranges": lambda info, *args: [{"start_time": 0, "end_time": 720}],
-        "force_keyframes_at_cuts": True,
+        "ffmpeg_location": ffmpeg_exe,
     }
 
-    if ffmpeg_dir:
-        ydl_opts["ffmpeg_location"] = ffmpeg_dir
     if cookies_file:
         ydl_opts["cookiefile"] = cookies_file
 
