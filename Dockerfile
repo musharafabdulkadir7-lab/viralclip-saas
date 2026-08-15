@@ -19,6 +19,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Force upgrade to the absolute latest yt-dlp master branch to get hotfixes for YouTube bot detection
+RUN pip install --no-cache-dir -U https://github.com/yt-dlp/yt-dlp/archive/master.zip
+
 # Copy the full application
 COPY . .
 
