@@ -240,12 +240,16 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        const niche = document.getElementById('niche-input').value.trim() || 'motivation';
+        
+        // If worker is offline, try to wake it up via the custom URI
         if (!workerIsAlive) {
+            const userId = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1] || 'demo_user_123';
+            window.location.href = `clipai://start?user_id=${userId}`;
+            // Also show the modal just in case they haven't downloaded it yet
             document.getElementById('worker-modal').classList.remove('hidden');
-            return;
         }
 
-        const niche = document.getElementById('niche-input').value.trim() || 'motivation';
         runBtn.disabled = true;
         runBtn.textContent = 'Running...';
 
