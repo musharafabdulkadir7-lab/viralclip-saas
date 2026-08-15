@@ -102,9 +102,13 @@ def run_worker_loop():
                 if job:
                     job_id = job["job_id"]
                     niche = job["niche"]
-                    print(f"\n[!] Picked up new job: {job_id} (Niche: {niche})")
+                    # Use the user_id from the job payload so each customer's job is tracked correctly
+                    job_user_id = job.get("user_id", USER_ID)
+                    print(f"\n[!] Picked up new job: {job_id} (Niche: {niche}, User: {job_user_id})")
+                    
                     try:
-                        run_clip_pipeline(niche, USER_ID, job_id)
+                        # Run the heavy pipeline synchronously
+                        run_clip_pipeline(niche, job_user_id, job_id)
                     except Exception as pipeline_err:
                         print(f"Pipeline error: {pipeline_err}")
                         requests.post(f"{API_BASE_URL}/api/v1/worker/complete", json={

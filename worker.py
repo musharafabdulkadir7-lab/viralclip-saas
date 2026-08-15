@@ -8,11 +8,11 @@ current_dir = pathlib.Path(__file__).parent.resolve()
 if str(current_dir) not in sys.path:
     sys.path.append(str(current_dir))
 
-DEFAULT_AGENT_DIR = current_dir.parent / "youtube_ai_agent"
-YOUTUBE_AGENT_DIR = os.environ.get("YOUTUBE_AGENT_DIR", str(DEFAULT_AGENT_DIR))
-
-if YOUTUBE_AGENT_DIR not in sys.path:
-    sys.path.append(YOUTUBE_AGENT_DIR)
+# For PyInstaller bundled exe, also check sys._MEIPASS (the temp extraction folder)
+if getattr(sys, 'frozen', False):
+    bundle_dir = pathlib.Path(sys._MEIPASS)
+    if str(bundle_dir) not in sys.path:
+        sys.path.insert(0, str(bundle_dir))
 
 # Import video processing modules — fail softly if not installed
 MODULES_AVAILABLE = True
@@ -28,10 +28,10 @@ except ImportError as e:
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
-API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
-
 def update_job_status(job_id: str, status: str, progress: int, message: str, url: str = "", title: str = "", niche: str = ""):
     """Updates job progress back to the cloud via HTTP API."""
+    # Read fresh each time so .exe env vars are always respected
+    API_BASE_URL = os.environ.get("API_BASE_URL", "https://viralclip-saas.onrender.com")
     print(f"[{progress}%] {status}: {message}")
     try:
         import requests
@@ -43,7 +43,7 @@ def update_job_status(job_id: str, status: str, progress: int, message: str, url
                 "url": url,
                 "title": title,
                 "niche": niche
-            }, params={"user_id": "demo_user_123"}, timeout=5) # Hardcoded demo user for now
+            }, params={"user_id": user_id}, timeout=10)
         else:
             requests.post(f"{API_BASE_URL}/api/v1/worker/progress", params={
                 "job_id": job_id,

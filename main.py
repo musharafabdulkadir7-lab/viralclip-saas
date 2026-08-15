@@ -130,7 +130,8 @@ async def generate_clip(payload: ClipRequest, request: Request):
     if redis_client:
         redis_client.lpush(f"worker_queue:{user_id}", json.dumps({
             "job_id": job_id,
-            "niche": payload.niche
+            "niche": payload.niche,
+            "user_id": user_id
         }))
 
     return {"status": "success", "job_id": job_id}
@@ -258,8 +259,11 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
         user_id = session.get("client_reference_id")
-        if user_id:
-            supabase.table("users").update({"license": "lifetime"}).eq("id", user_id).execute()
+        if user_id and supabase:
+            try:
+                supabase.table("users").update({"license": "lifetime"}).eq("id", user_id).execute()
+            except Exception as e:
+                print(f"Stripe webhook DB error: {e}")
 
     return {"status": "success"}
 
