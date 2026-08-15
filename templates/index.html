@@ -193,6 +193,11 @@
         }
         function showDownloadTip() {
             document.getElementById('download-tip').style.display = 'block';
+            // Auto-close the whole modal after 10 seconds so it doesn't get stuck
+            setTimeout(() => {
+                document.getElementById('worker-modal').classList.add('hidden');
+                document.getElementById('download-tip').style.display = 'none';
+            }, 10000);
         }
     </script>
     <script src="/static/app.js?v=3"></script>
