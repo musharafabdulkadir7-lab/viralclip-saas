@@ -242,12 +242,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const niche = document.getElementById('niche-input').value.trim() || 'motivation';
         
-        // If worker is offline, try to wake it up via the custom URI
+        // If worker is offline, wake it up but DON'T submit yet — let them click again once it's active
         if (!workerIsAlive) {
             const userId = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1] || 'demo_user_123';
             window.location.href = `clipai://start?user_id=${userId}`;
-            // Also show the modal just in case they haven't downloaded it yet
+            // Show the modal in case they haven't downloaded the app yet
             document.getElementById('worker-modal').classList.remove('hidden');
+            addMessage('Director AI', 'Worker is offline. Starting it now... Once the **🟢 Worker Active** badge appears, click the button again to generate your clip!');
+            return; // Don't submit the job yet — wait for worker to come online
         }
 
         runBtn.disabled = true;
