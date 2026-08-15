@@ -165,13 +165,25 @@
                 </p>
             </div>
             
-            <a href="/static/client_worker.py" download="ClipAI_Worker.py" class="btn btn-generate" style="margin-top: 16px;">
-                Download Worker (Python Script)
-            </a>
+            <div style="display: flex; gap: 8px; margin-top: 16px;">
+                <a href="#" id="start-worker-btn" class="btn btn-generate" style="flex: 1;" onclick="startWorkerURI()">
+                    ⚡ Start Worker Now
+                </a>
+                <a href="/static/client_worker.py" download="ClipAI_Worker.py" class="btn btn-outline" style="flex: 1;" title="First time? Download the App">
+                    Download App
+                </a>
+            </div>
+            
             <button id="close-worker-modal" class="btn btn-ghost" style="margin-top: 8px;" onclick="document.getElementById('worker-modal').classList.add('hidden')">I'll do it later</button>
         </div>
     </div>
 
+    <script>
+        function startWorkerURI() {
+            const userId = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1] || 'demo_user_123';
+            window.location.href = `clipai://start?user_id=${userId}`;
+        }
+    </script>
     <script src="/static/app.js?v=3"></script>
 </body>
 </html>
