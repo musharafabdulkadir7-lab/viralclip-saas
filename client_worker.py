@@ -25,8 +25,12 @@ os.makedirs(BIN_DIR, exist_ok=True)
 os.environ["PATH"] += os.pathsep + str(BIN_DIR)
 
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://viralclip-saas.onrender.com")
+# Force inject it so imported modules like worker.py use it
+os.environ["API_BASE_URL"] = API_BASE_URL
+
 # For testing locally, uncomment the line below:
 # API_BASE_URL = "http://localhost:8000"
+# os.environ["API_BASE_URL"] = API_BASE_URL
 
 USER_ID = os.environ.get("CLIPAI_USER_ID", "demo_user_123")
 is_running = True
