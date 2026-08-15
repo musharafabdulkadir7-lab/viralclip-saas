@@ -32,7 +32,38 @@ os.environ["API_BASE_URL"] = API_BASE_URL
 # API_BASE_URL = "http://localhost:8000"
 # os.environ["API_BASE_URL"] = API_BASE_URL
 
-USER_ID = os.environ.get("CLIPAI_USER_ID", "demo_user_123")
+def get_user_id():
+    # If passed as arg via URI handler
+    if len(sys.argv) > 1:
+        for arg in sys.argv[1:]:
+            if arg.startswith("clipai://"):
+                from urllib.parse import urlparse, parse_qs
+                parsed = urlparse(arg)
+                qs = parse_qs(parsed.query)
+                if "user_id" in qs:
+                    return qs["user_id"][0]
+
+    # Check local storage file
+    local_storage_path = Path.home() / ".clipai" / "user_id.txt"
+    if local_storage_path.exists():
+        stored_id = local_storage_path.read_text().strip()
+        if stored_id:
+            return stored_id
+
+    # Prompt user in terminal
+    print("\n" + "="*50)
+    print("Welcome to ClipAI Desktop Worker!")
+    print("="*50)
+    email = input("Please enter the email address you use on the website: ").strip()
+    if email:
+        local_storage_path.parent.mkdir(parents=True, exist_ok=True)
+        local_storage_path.write_text(email)
+        print(f"Saved! You won't have to enter this again. (Stored in {local_storage_path})")
+        return email
+        
+    return "demo_user_123"
+
+USER_ID = get_user_id()
 is_running = True
 
 def register_uri_scheme():
