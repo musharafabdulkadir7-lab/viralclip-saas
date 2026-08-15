@@ -212,12 +212,21 @@ async def worker_heartbeat(user_id: str):
     alive = redis_client.get(f"worker_heartbeat:{user_id}")
     return {"alive": bool(alive)}
 
+class ProgressPayload(BaseModel):
+    job_id: str
+    status: str = "running"
+    progress: int
+    message: str
+    url: str = ""
+
 @app.post("/api/v1/worker/progress")
-async def worker_progress(job_id: str, progress: int, message: str):
+async def worker_progress(payload: ProgressPayload):
     if redis_client:
-        redis_client.hset(f"job:{job_id}", mapping={
-            "progress": progress,
-            "message": message
+        redis_client.hset(f"job:{payload.job_id}", mapping={
+            "progress": payload.progress,
+            "message": payload.message,
+            "status": payload.status,
+            "url": payload.url
         })
     return {"status": "ok"}
 
