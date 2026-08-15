@@ -26,6 +26,10 @@
                 </nav>
             </div>
             <div class="topbar-right">
+                <div class="yt-status-badge" id="worker-status-badge" style="cursor: pointer;" onclick="document.getElementById('worker-modal').classList.remove('hidden')">
+                    <span class="status-dot" id="worker-dot"></span>
+                    <span id="worker-label">Worker Offline</span>
+                </div>
                 <div class="yt-status-badge" id="yt-status-badge">
                     <span class="status-dot" id="yt-dot"></span>
                     <span id="yt-label">Not Connected</span>
@@ -142,6 +146,32 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=2"></script>
+    <!-- Worker App Modal -->
+    <div id="worker-modal" class="modal-overlay hidden">
+        <div class="modal-box">
+            <div class="modal-icon">💻</div>
+            <h2 class="modal-title">Download Companion App</h2>
+            <p class="modal-desc" style="text-align: left;">
+                YouTube strictly blocks cloud servers from downloading videos. To generate clips for free, you must run the lightweight <strong>ClipAI Companion App</strong> on your home computer (Windows).
+                <br><br>
+                It securely processes videos on your home network and uploads them directly to your YouTube channel.
+            </p>
+            
+            <div class="modal-features" style="background: rgba(251,191,36,0.1); border-color: rgba(251,191,36,0.3);">
+                <strong style="color: #fbbf24; font-size: 13px; margin-bottom: 6px; display: block;">⚠️ Windows SmartScreen Warning</strong>
+                <p style="font-size: 13px; color: var(--text-2); line-height: 1.5; margin: 0;">
+                    Because this app is new and unsigned, Windows might flag it as "unrecognized".<br>
+                    Simply click <strong>"More info"</strong> and then <strong>"Run anyway"</strong> to start the worker.
+                </p>
+            </div>
+            
+            <a href="/static/client_worker.py" download="ClipAI_Worker.py" class="btn btn-generate" style="margin-top: 16px;">
+                Download Worker (Python Script)
+            </a>
+            <button id="close-worker-modal" class="btn btn-ghost" style="margin-top: 8px;" onclick="document.getElementById('worker-modal').classList.add('hidden')">I'll do it later</button>
+        </div>
+    </div>
+
+    <script src="/static/app.js?v=3"></script>
 </body>
 </html>

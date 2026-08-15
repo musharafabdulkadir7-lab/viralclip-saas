@@ -28,23 +28,30 @@ except ImportError as e:
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
-def _get_redis():
-    return redis.Redis.from_url(REDIS_URL, decode_responses=True)
+API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
 
-def update_job_status(job_id: str, status: str, progress: int, message: str, url: str = ""):
-    """Helper to update Redis hash and strictly enforce 24h TTL"""
+def update_job_status(job_id: str, status: str, progress: int, message: str, url: str = "", title: str = "", niche: str = ""):
+    """Updates job progress back to the cloud via HTTP API."""
+    print(f"[{progress}%] {status}: {message}")
     try:
-        r = _get_redis()
-        key = f"job:{job_id}"
-        r.hset(key, mapping={
-            "status": status,
-            "progress": progress,
-            "message": message,
-            "url": url
-        })
-        r.expire(key, 86400)
+        import requests
+        if status in ["complete", "error"]:
+            requests.post(f"{API_BASE_URL}/api/v1/worker/complete", json={
+                "job_id": job_id,
+                "status": status,
+                "message": message,
+                "url": url,
+                "title": title,
+                "niche": niche
+            }, params={"user_id": "demo_user_123"}, timeout=5) # Hardcoded demo user for now
+        else:
+            requests.post(f"{API_BASE_URL}/api/v1/worker/progress", params={
+                "job_id": job_id,
+                "progress": progress,
+                "message": message
+            }, timeout=5)
     except Exception as e:
-        print(f"Redis update error: {e}")
+        print(f"Failed to update cloud progress: {e}")
 
 def run_clip_pipeline(niche: str, user_id: str, job_id: str):
     """The heavy video processing pipeline. Runs in a background thread."""
@@ -146,7 +153,7 @@ def run_clip_pipeline(niche: str, user_id: str, job_id: str):
             except Exception as e:
                 print(f"Analytics save error: {e}")
                 
-            update_job_status(job_id, "complete", 100, "Done! Video is live.", youtube_url)
+            update_job_status(job_id, "complete", 100, "Done! Video is live.", youtube_url, title, niche)
         else:
             update_job_status(job_id, "error", 100,
                 f"Upload failed: {upload_res.get('error')}")

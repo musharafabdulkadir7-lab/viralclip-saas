@@ -1,3 +1,32 @@
+// ─── Worker Connection State ──────────────────────────────────────────────────
+let workerIsAlive = false;
+
+function updateWorkerUI(alive) {
+    workerIsAlive = alive;
+    const dot = document.getElementById('worker-dot');
+    const label = document.getElementById('worker-label');
+    if (!dot || !label) return;
+    if (alive) {
+        dot.className = 'status-dot connected';
+        label.textContent = 'Worker Active';
+    } else {
+        dot.className = 'status-dot';
+        label.textContent = 'Worker Offline';
+    }
+}
+
+async function checkWorkerHeartbeat() {
+    try {
+        const userId = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1] || 'demo_user_123';
+        const res = await fetch(`/api/v1/worker/heartbeat?user_id=${userId}`);
+        const data = await res.json();
+        updateWorkerUI(data.alive);
+    } catch (e) {
+        updateWorkerUI(false);
+    }
+}
+setInterval(checkWorkerHeartbeat, 5000);
+
 // ─── YouTube Connection State ─────────────────────────────────────────────────
 function updateYouTubeUI(connected) {
     const dot = document.getElementById('yt-dot');
@@ -199,6 +228,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // ─── Generate Button ──────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+    checkWorkerHeartbeat(); // initial check
+
     const runBtn = document.getElementById('run-clip-farm-btn');
 
     runBtn.addEventListener('click', async () => {
@@ -206,6 +237,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!isConnected) {
             addMessage('Director AI', 'Please connect your YouTube account first using the **Connect YouTube** button in the top right.');
             showToast('Connect YouTube first', '#f59e0b');
+            return;
+        }
+
+        if (!workerIsAlive) {
+            document.getElementById('worker-modal').classList.remove('hidden');
             return;
         }
 
