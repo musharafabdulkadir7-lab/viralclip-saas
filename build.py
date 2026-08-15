@@ -8,7 +8,6 @@ from pathlib import Path
 # Paths
 BUILD_DIR = Path("build_output")
 BIN_DIR = BUILD_DIR / "bin"
-DIST_DIR = Path("dist")
 
 def download_binaries():
     """Download ffmpeg and yt-dlp standalone binaries."""
@@ -24,7 +23,7 @@ def download_binaries():
             for chunk in res.iter_content(8192):
                 f.write(chunk)
                 
-    # 2. Download ffmpeg.exe (using imageio_ffmpeg wrapper to grab it locally if possible)
+    # 2. Download ffmpeg.exe via imageio_ffmpeg
     ffmpeg_path = BIN_DIR / "ffmpeg.exe"
     if not ffmpeg_path.exists():
         print("Locating ffmpeg.exe...")
@@ -40,20 +39,43 @@ def download_binaries():
 def run_pyinstaller():
     """Run PyInstaller to create the executable."""
     print("Running PyInstaller...")
-    
-    # We use subprocess to run PyInstaller
-    # --onefile creates a single exe
-    # --add-data bundles our bin folder
-    # --noconsole hides the ugly black terminal box (optional, but let's keep it for debug for now)
-    
+
+    # Collect all the AI pipeline scripts in this directory to bundle explicitly
+    agent_scripts = [
+        "worker.py",
+        "video_finder.py",
+        "video_downloader.py",
+        "clip_finder.py",
+        "clip_cutter.py",
+        "youtube_uploader.py",
+    ]
+
+    # Build --add-data args for each agent script (bundle alongside binary)
+    add_data_args = []
+    for script in agent_scripts:
+        if Path(script).exists():
+            add_data_args += ["--add-data", f"{script}{os.pathsep}."]
+
+    # Also add hidden imports so PyInstaller doesn't miss dynamically-imported modules
+    hidden_imports = [
+        "--hidden-import", "video_finder",
+        "--hidden-import", "video_downloader",
+        "--hidden-import", "clip_finder",
+        "--hidden-import", "clip_cutter",
+        "--hidden-import", "youtube_uploader",
+        "--hidden-import", "worker",
+        "--hidden-import", "pystray",
+        "--hidden-import", "PIL",
+        "--hidden-import", "PIL.Image",
+        "--hidden-import", "PIL.ImageDraw",
+    ]
+
     args = [
         sys.executable, "-m", "PyInstaller",
         "--name", "ClipAI_Worker",
         "--onefile",
         "--add-data", f"{BIN_DIR}{os.pathsep}bin",
-        "--paths", str(Path("..") / "youtube_ai_agent"),
-        "client_worker.py"
-    ]
+    ] + add_data_args + hidden_imports + ["client_worker.py"]
     
     subprocess.run(args, check=True)
     print("Build complete! Check the 'dist' folder for ClipAI_Worker.exe")

@@ -8,8 +8,11 @@ import json
 import random
 import httpx
 from datetime import datetime, timedelta
+from pathlib import Path
 
-USED_VIDEOS_FILE = "used_videos.json"
+os.makedirs(str(Path.home() / ".clipai"), exist_ok=True)
+
+USED_VIDEOS_FILE = os.path.join(str(Path.home() / ".clipai"), "used_videos.json")
 MIN_VIEWS = 50_000
 MIN_DURATION_SEC = 300   # 5 minutes
 MAX_AGE_DAYS = 730

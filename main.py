@@ -221,6 +221,88 @@ async def worker_progress(job_id: str, progress: int, message: str):
         })
     return {"status": "ok"}
 
+class AnalyzeRequest(BaseModel):
+    transcript: str
+    niche: str
+
+@app.post("/api/v1/worker/analyze-transcript")
+async def analyze_transcript(payload: AnalyzeRequest, user_id: str):
+    """
+    Accepts a transcript from the worker, asks Gemini for the best segment,
+    and returns the timestamps. This protects the GEMINI_API_KEY on the server.
+    """
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not api_key:
+        return {"error": "GEMINI_API_KEY not configured on server"}
+        
+    try:
+        from google import genai
+        from google.genai import types
+        import re
+        
+        client = genai.Client(api_key=api_key)
+        
+        prompt = f"""You are an expert YouTube Shorts creator in the '{payload.niche}' niche.
+
+Below is a timestamped transcript from a long-form YouTube video.
+Your job is to find the SINGLE most compelling complete segment — a story, life lesson, or argument that has:
+- A clear beginning (hook/setup)
+- A middle (buildup/details)  
+- A natural ending (conclusion/punchline/resolution)
+
+The segment should be 2 to 4 minutes long (120 to 240 seconds) so it can be split into 2-4 Parts of ~55 seconds each.
+
+Rules:
+- Pick where someone is telling a complete story or making a full point — NOT just a random 3-minute window
+- The start should be a natural hook (a question, a surprising claim, or a story setup)
+- The end should be a natural resolution (not mid-sentence)
+- Total length must be 120-240 seconds
+
+Transcript:
+{payload.transcript}
+
+You MUST respond in EXACTLY this format, nothing else, no markdown, no bullet points:
+START: 180
+END: 360
+CAPTION: How I Built My First Million
+REASON: This segment tells a complete rags-to-riches story with a clear arc."""
+
+        response = client.models.generate_content(
+            model="gemini-3.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=256)
+        )
+        text = response.text.strip()
+        
+        def parse_ts(val):
+            val = val.strip()
+            if ":" in val:
+                parts = val.split(":")
+                if len(parts) == 2:
+                    return int(parts[0]) * 60 + int(parts[1])
+                elif len(parts) == 3:
+                    return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+            return int(val)
+
+        start_m = re.search(r"START:\s*([\d:]+)", text)
+        end_m   = re.search(r"END:\s*([\d:]+)", text)
+        caption_m = re.search(r"CAPTION:\s*(.+)", text)
+
+        if not start_m or not end_m:
+            return {"error": "Could not parse Gemini output", "raw": text}
+
+        start = parse_ts(start_m.group(1))
+        end   = parse_ts(end_m.group(1))
+        
+        return {
+            "start_sec": start,
+            "end_sec": end,
+            "caption": caption_m.group(1).strip() if caption_m else payload.niche.title()
+        }
+    except Exception as e:
+        print(f"Analyze error: {e}")
+        return {"error": str(e)}
+
 @app.post("/api/v1/create-checkout-session")
 async def create_checkout_session(request: Request):
     user_id = request.cookies.get("user_id", "demo_user_123")

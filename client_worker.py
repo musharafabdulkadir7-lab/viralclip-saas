@@ -113,7 +113,7 @@ def run_worker_loop():
                         print(f"Pipeline error: {pipeline_err}")
                         requests.post(f"{API_BASE_URL}/api/v1/worker/complete", json={
                             "job_id": job_id, "status": "error", "message": str(pipeline_err)
-                        }, params={"user_id": USER_ID})
+                        }, params={"user_id": job_user_id})
         except requests.exceptions.RequestException:
             pass
         except Exception as e:

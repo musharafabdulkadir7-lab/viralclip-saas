@@ -8,11 +8,14 @@ import os
 import glob
 import sys
 
-DOWNLOAD_DIR = "downloaded_videos"
+from pathlib import Path
+DOWNLOAD_DIR = os.path.join(str(Path.home() / ".clipai"), "downloaded_videos")
 
 
 def _get_ffmpeg_exe() -> str:
     """Auto-detect ffmpeg exe: bundled on Windows, system on Linux."""
+    if getattr(sys, 'frozen', False):
+        return os.path.join(sys._MEIPASS, "bin", "ffmpeg.exe")
     if sys.platform == "win32":
         try:
             import imageio_ffmpeg

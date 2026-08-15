@@ -97,7 +97,8 @@ def run_clip_pipeline(niche: str, user_id: str, job_id: str):
             start_sec=clip_info["start_sec"],
             end_sec=clip_info["end_sec"],
             caption=clip_info.get("caption", niche.upper()),
-            num_parts=clip_info.get("num_parts", 2)
+            num_parts=clip_info.get("num_parts", 2),
+            watermark=f"@{niche.replace(' ', '').capitalize()}Viral"
         )
 
         if not clip_paths:

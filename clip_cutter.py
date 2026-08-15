@@ -17,10 +17,13 @@ import os
 import sys
 import time
 
-OUTPUT_DIR = "generated_videos"
+from pathlib import Path
+OUTPUT_DIR = os.path.join(str(Path.home() / ".clipai"), "generated_videos")
 
 # Dynamically locate ffmpeg: system on Linux, bundled on Windows
 def _get_ffmpeg() -> str:
+    if getattr(sys, 'frozen', False):
+        return os.path.join(sys._MEIPASS, "bin", "ffmpeg.exe")
     if sys.platform == "win32":
         try:
             import imageio_ffmpeg
