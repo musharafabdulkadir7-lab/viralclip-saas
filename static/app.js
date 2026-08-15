@@ -219,10 +219,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Resume polling if a job was running before page refresh
     const activeJobId = localStorage.getItem('active_job_id');
     if (activeJobId) {
-        const runBtn = document.getElementById('run-clip-farm-btn');
-        runBtn.disabled = true;
-        runBtn.textContent = 'Running...';
-        startStatusPolling(activeJobId);
+        // First check if the job is actually still active on the server
+        try {
+            const res = await fetch('/api/v1/job-status/' + activeJobId);
+            const data = await res.json();
+            // If the job is complete, errored, or stuck at 0% (initializing) — clear it, don't resume
+            if (data.status === 'complete' || data.status === 'error' || data.progress === 0 || !data.status || data.status === 'idle') {
+                localStorage.removeItem('active_job_id');
+            } else {
+                // Job is genuinely still running — resume polling
+                const runBtn = document.getElementById('run-clip-farm-btn');
+                runBtn.disabled = true;
+                runBtn.textContent = 'Running...';
+                startStatusPolling(activeJobId);
+            }
+        } catch (e) {
+            // Can't reach server — clear the job to avoid infinite stuck state
+            localStorage.removeItem('active_job_id');
+        }
     }
 });
 
