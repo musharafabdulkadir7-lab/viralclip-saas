@@ -125,10 +125,13 @@ async def generate_clip(payload: ClipRequest, request: Request):
     if supabase and user["license"] == "free_tier":
         supabase.table("users").update({"free_clip_used": True}).eq("id", user_id).execute()
 
-    # Run pipeline in background thread (worker process handles heavy lifting)
-    from worker import run_clip_pipeline
-    thread = threading.Thread(target=run_clip_pipeline, args=(payload.niche, user_id, job_id), daemon=True)
-    thread.start()
+    # Queue the job for the client worker
+    import json
+    if redis_client:
+        redis_client.lpush(f"worker_queue:{user_id}", json.dumps({
+            "job_id": job_id,
+            "niche": payload.niche
+        }))
 
     return {"status": "success", "job_id": job_id}
 
@@ -138,14 +141,84 @@ async def get_job_status(job_id: str):
         return {"status": "idle", "progress": 0, "message": "Redis not connected"}
     job_data = redis_client.hgetall(f"job:{job_id}")
     if not job_data:
-        return {"status": "idle", "progress": 0, "message": "Job not found"}
-    
+        return {"status": "error", "progress": 0, "message": "Job not found"}
     return {
-        "status": job_data.get("status", "idle"),
+        "status": job_data.get("status", "unknown"),
         "progress": int(job_data.get("progress", 0)),
         "message": job_data.get("message", ""),
         "url": job_data.get("url", "")
     }
+
+class JobCompletePayload(BaseModel):
+    job_id: str
+    status: str
+    message: str
+    url: str = ""
+    title: str = ""
+    niche: str = ""
+
+@app.get("/api/v1/worker/poll")
+async def worker_poll(user_id: str):
+    if not redis_client:
+        return {"job": None}
+    
+    # Heartbeat
+    redis_client.setex(f"worker_heartbeat:{user_id}", 30, "alive")
+
+    job = redis_client.rpop(f"worker_queue:{user_id}")
+    if job:
+        # Also update status to 'processing'
+        job_data = json.loads(job)
+        redis_client.hset(f"job:{job_data['job_id']}", mapping={
+            "status": "processing",
+            "message": "Local worker started pipeline...",
+            "progress": 5
+        })
+        return {"job": job_data}
+    return {"job": None}
+
+@app.post("/api/v1/worker/complete")
+async def worker_complete(payload: JobCompletePayload, user_id: str):
+    if not redis_client:
+        return {"error": "Redis not connected"}
+        
+    redis_client.hset(f"job:{payload.job_id}", mapping={
+        "status": payload.status,
+        "progress": 100,
+        "message": payload.message,
+        "url": payload.url
+    })
+    
+    # Save to supabase if success
+    if payload.status == "complete" and supabase:
+        try:
+            supabase.table("clips").insert({
+                "user_id": user_id,
+                "youtube_url": payload.url,
+                "title": payload.title,
+                "niche": payload.niche,
+                "views": 0,
+            }).execute()
+        except Exception as e:
+            print(f"Analytics save error: {e}")
+            
+    return {"status": "ok"}
+
+@app.get("/api/v1/worker/heartbeat")
+async def worker_heartbeat(user_id: str):
+    if not redis_client:
+        return {"alive": False}
+    alive = redis_client.get(f"worker_heartbeat:{user_id}")
+    return {"alive": bool(alive)}
+
+@app.post("/api/v1/worker/progress")
+async def worker_progress(job_id: str, progress: int, message: str):
+    if redis_client:
+        redis_client.hset(f"job:{job_id}", mapping={
+            "progress": progress,
+            "message": message
+        })
+    return {"status": "ok"}
 
 @app.post("/api/v1/create-checkout-session")
 async def create_checkout_session(request: Request):
