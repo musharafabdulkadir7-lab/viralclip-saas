@@ -9,6 +9,7 @@ SCOPES = ['https://www.googleapis.com/auth/youtube.upload']
 def get_authenticated_service(creds_dict):
     """
     Builds the YouTube service object using OAuth credentials from the database.
+    Auto-refreshes expired tokens and saves the new token back to Supabase.
     """
     if not creds_dict:
         return None
@@ -24,6 +25,20 @@ def get_authenticated_service(creds_dict):
             
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
+        # Save the new refreshed access token back to Supabase so it's valid next time
+        try:
+            from supabase import create_client
+            supabase_url = os.environ.get("SUPABASE_URL", "")
+            supabase_key = os.environ.get("SUPABASE_KEY", "")
+            user_id = creds_dict.get("user_id")
+            if supabase_url and supabase_key and user_id:
+                sb = create_client(supabase_url, supabase_key)
+                sb.table("users").update({
+                    "youtube_access_token": creds.token
+                }).eq("id", user_id).execute()
+                print("[Auth] Refreshed and saved new YouTube access token.")
+        except Exception as e:
+            print(f"[Auth] Warning: Could not save refreshed token: {e}")
             
     return build('youtube', 'v3', credentials=creds)
 

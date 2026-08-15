@@ -122,7 +122,8 @@ def run_clip_pipeline(niche: str, user_id: str, job_id: str):
                     "token": res.data[0].get("youtube_access_token"),
                     "refresh_token": res.data[0].get("youtube_refresh_token"),
                     "client_id": os.environ.get("GOOGLE_CLIENT_ID", ""),
-                    "client_secret": os.environ.get("GOOGLE_CLIENT_SECRET", "")
+                    "client_secret": os.environ.get("GOOGLE_CLIENT_SECRET", ""),
+                    "user_id": user_id  # Needed so token refresh saves to correct account
                 }
 
         if not creds_dict:
