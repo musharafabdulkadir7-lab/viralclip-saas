@@ -28,8 +28,12 @@ def _write_cookies_file() -> str:
     cookies_content = os.environ.get("YOUTUBE_COOKIES", "")
     if not cookies_content:
         return ""
+    
+    # Cloud dashboards often escape newlines into literal '\n' strings. Fix it:
+    cookies_content = cookies_content.replace("\\n", "\n").replace("\\t", "\t")
+    
     cookies_path = "/tmp/youtube_cookies.txt" if sys.platform != "win32" else os.path.join(os.environ.get("TEMP", "."), "youtube_cookies.txt")
-    with open(cookies_path, "w") as f:
+    with open(cookies_path, "w", encoding="utf-8") as f:
         f.write(cookies_content)
     print("[Downloader] Using YouTube cookies from environment.")
     return cookies_path
@@ -68,7 +72,7 @@ def download_video_and_subs(url: str, video_id: str) -> dict:
         "concurrent_fragment_downloads": 8,
         "ffmpeg_location": ffmpeg_exe,
         # Bypass YouTube bot detection by using mobile clients
-        "extractor_args": {"youtube": {"player_client": ["ios", "web_creator"]}},
+        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
     }
 
     if cookies_file:
