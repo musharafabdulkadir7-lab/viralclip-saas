@@ -130,7 +130,23 @@ def run_clip_pipeline(niche: str, user_id: str, job_id: str):
 
         if upload_res.get("status") == "success":
             video_finder.mark_video_used(video["id"], video["title"])
-            update_job_status(job_id, "complete", 100, "Done! Video is live.", upload_res.get("url"))
+            youtube_url = upload_res.get("url", "")
+            
+            # Save to clips table for analytics
+            try:
+                if supabase_url and supabase_key:
+                    _sb = create_client(supabase_url, supabase_key)
+                    _sb.table("clips").insert({
+                        "user_id": user_id,
+                        "youtube_url": youtube_url,
+                        "title": title,
+                        "niche": niche,
+                        "views": 0,
+                    }).execute()
+            except Exception as e:
+                print(f"Analytics save error: {e}")
+                
+            update_job_status(job_id, "complete", 100, "Done! Video is live.", youtube_url)
         else:
             update_job_status(job_id, "error", 100,
                 f"Upload failed: {upload_res.get('error')}")

@@ -80,6 +80,25 @@ async def youtube_status(request: Request):
         print(f"Status check error: {e}")
     return {"connected": False}
 
+@app.get("/api/v1/analytics")
+async def get_analytics(request: Request):
+    user_id = request.cookies.get("user_id", "demo_user_123")
+    if not supabase:
+        return {"videos": [], "total_views": 0, "total_videos": 0, "avg_views": 0}
+    try:
+        res = supabase.table("clips").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
+        videos = res.data or []
+        total_views = sum(v.get("views", 0) for v in videos)
+        return {
+            "videos": videos,
+            "total_views": total_views,
+            "total_videos": len(videos),
+            "avg_views": total_views // len(videos) if videos else 0
+        }
+    except Exception as e:
+        print(f"Analytics error: {e}")
+        return {"videos": [], "total_views": 0, "total_videos": 0, "avg_views": 0}
+
 @app.post("/api/v1/generate-clip")
 async def generate_clip(payload: ClipRequest, request: Request):
     # Retrieve user ID (mock session ID for demonstration)

@@ -1,117 +1,113 @@
 // ─── YouTube Connection State ─────────────────────────────────────────────────
 function updateYouTubeUI(connected) {
-    const indicator = document.getElementById('youtube-indicator');
-    const statusText = document.getElementById('youtube-status-text');
+    const dot = document.getElementById('yt-dot');
+    const label = document.getElementById('yt-label');
     const btn = document.getElementById('connect-youtube-btn');
-
-    if (!indicator || !statusText || !btn) return;
-
+    if (!dot || !label || !btn) return;
     if (connected) {
-        indicator.style.background = '#10b981';
-        statusText.innerText = 'Connected ✔';
-        statusText.style.color = '#10b981';
-        btn.innerText = '✅ YouTube Connected';
-        btn.style.background = '#1a3a2a';
-        btn.style.color = '#10b981';
-        btn.style.pointerEvents = 'none';
-        btn.style.border = '1px solid #10b981';
+        dot.className = 'status-dot connected';
+        label.textContent = 'YouTube Connected';
+        btn.textContent = '✓ Connected';
+        btn.className = 'btn btn-connect connected';
     } else {
-        indicator.style.background = '#ef4444';
-        statusText.innerText = 'Not Connected';
-        statusText.style.color = '#94a3b8';
-        btn.innerText = '🔗 Connect YouTube';
-        btn.style.background = '#ef4444';
-        btn.style.color = '#fff';
-        btn.style.pointerEvents = 'auto';
-        btn.style.border = 'none';
+        dot.className = 'status-dot';
+        label.textContent = 'Not Connected';
+        btn.textContent = 'Connect YouTube';
+        btn.className = 'btn btn-connect';
     }
 }
 
-// ─── On Page Load ─────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', async () => {
+// ─── Tab Switching ────────────────────────────────────────────────────────────
+function switchTab(tab) {
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+    document.querySelectorAll('.nav-tab').forEach(el => el.classList.remove('active'));
+    document.getElementById('tab-content-' + tab).classList.remove('hidden');
+    document.getElementById('tab-' + tab).classList.add('active');
+    if (tab === 'analytics') loadAnalytics();
+}
 
-    // Check if Google just redirected back with ?youtube=connected
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('youtube') === 'connected') {
-        localStorage.setItem('youtube_connected', 'true');
-        window.history.replaceState({}, document.title, window.location.pathname);
-        showToast('✅ YouTube connected successfully!', '#10b981');
-    } else if (urlParams.get('youtube') === 'error') {
-        showToast('❌ YouTube connection failed. Please try again.', '#ef4444');
-        window.history.replaceState({}, document.title, window.location.pathname);
-    }
-
-    // Always verify against the server — localStorage can lie
+// ─── Analytics ────────────────────────────────────────────────────────────────
+async function loadAnalytics() {
     try {
-        const res = await fetch('/api/v1/auth/youtube/status');
+        const res = await fetch('/api/v1/analytics');
         const data = await res.json();
-        if (data.connected) {
-            localStorage.setItem('youtube_connected', 'true');
+
+        document.getElementById('stat-total-views').textContent = formatNumber(data.total_views);
+        document.getElementById('stat-total-videos').textContent = data.total_videos;
+        document.getElementById('stat-avg-views').textContent = formatNumber(data.avg_views);
+
+        const body = document.getElementById('videos-table-body');
+        if (!data.videos || data.videos.length === 0) {
+            body.innerHTML = '<div class="table-empty">No videos posted yet. Generate your first clip!</div>';
+            return;
         }
-        updateYouTubeUI(data.connected);
+
+        body.innerHTML = `
+            <div class="table-row-header">
+                <span>Title</span><span>Views</span><span>Posted</span><span>Link</span>
+            </div>
+            ${data.videos.map(v => `
+            <div class="table-row">
+                <div class="video-title">${escHtml(v.title || v.niche || 'Untitled')}</div>
+                <div class="video-views">${formatNumber(v.views || 0)}</div>
+                <div class="video-date">${v.created_at ? new Date(v.created_at).toLocaleDateString() : '—'}</div>
+                <div class="video-link">${v.youtube_url ? `<a href="${v.youtube_url}" target="_blank">Watch ↗</a>` : '—'}</div>
+            </div>`).join('')}
+        `;
     } catch (e) {
-        // Fallback to localStorage if server unreachable
-        const cached = localStorage.getItem('youtube_connected') === 'true';
-        updateYouTubeUI(cached);
+        console.error('Analytics load error:', e);
     }
-
-    // Assign unique user ID cookie if not exists
-    if (!document.cookie.split('; ').find(r => r.startsWith('user_id='))) {
-        document.cookie = `user_id=user_${Math.floor(Math.random()*100000)}; path=/; max-age=31536000`;
-    }
-
-    // Resume polling if a job was running before page refresh
-    const activeJobId = localStorage.getItem('active_job_id');
-    if (activeJobId) {
-        const runClipBtn = document.getElementById('run-clip-farm-btn');
-        runClipBtn.disabled = true;
-        runClipBtn.textContent = '⏳ Running...';
-        startStatusPolling(activeJobId);
-    }
-});
-
-// ─── Toast Notification ───────────────────────────────────────────────────────
-function showToast(message, color) {
-    const toast = document.createElement('div');
-    toast.style.cssText = `
-        position: fixed; top: 24px; left: 50%; transform: translateX(-50%);
-        background: ${color}; color: white; padding: 14px 28px;
-        border-radius: 12px; font-weight: 600; font-size: 15px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.4); z-index: 9999;
-        animation: fadeIn 0.3s ease;
-    `;
-    toast.innerText = message;
-    document.body.appendChild(toast);
-    setTimeout(() => toast.remove(), 4000);
 }
 
-// ─── Add Chat Message ─────────────────────────────────────────────────────────
-function addMessage(sender, text, className) {
+function formatNumber(n) {
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+    return String(n || 0);
+}
+
+function escHtml(str) {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ─── Toast ────────────────────────────────────────────────────────────────────
+function showToast(message, color = '#10b981') {
+    const t = document.createElement('div');
+    t.style.cssText = `position:fixed;top:20px;left:50%;transform:translateX(-50%);background:${color};color:#fff;padding:12px 24px;border-radius:10px;font-weight:600;font-size:14px;box-shadow:0 4px 20px rgba(0,0,0,0.4);z-index:9999;animation:toastIn 0.3s ease;font-family:Inter,sans-serif;`;
+    t.textContent = message;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 3500);
+}
+
+// ─── Add Log Entry ────────────────────────────────────────────────────────────
+function addMessage(sender, text) {
     const chatWindow = document.getElementById('chat-window');
-    const messageDiv = document.createElement('div');
-    messageDiv.className = `message ${className}`;
-    let avatar = sender === 'You' ? '👤' : '🤖';
-    let formattedText = text.replace(/\n/g, '<br>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-    messageDiv.innerHTML = `
-        <div class="avatar">${avatar}</div>
-        <div class="bubble"><strong>${sender}:</strong> <br/>${formattedText}</div>
-    `;
-    chatWindow.appendChild(messageDiv);
+    if (!chatWindow) return;
+    const el = document.createElement('div');
+    el.className = 'log-entry';
+    const icon = sender === 'You' ? '👤' : '🤖';
+    const formatted = text.replace(/\n/g,'<br>').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>');
+    el.innerHTML = `
+        <div class="log-icon">${icon}</div>
+        <div class="log-body">
+            <div class="log-sender">${sender}</div>
+            <div class="log-text">${formatted}</div>
+        </div>`;
+    chatWindow.appendChild(el);
     chatWindow.scrollTop = chatWindow.scrollHeight;
 }
 
-// ─── Job Status Polling ───────────────────────────────────────────────────────
+// ─── Job Polling ──────────────────────────────────────────────────────────────
 let pollingInterval = null;
 
 function startStatusPolling(jobId) {
     const progressContainer = document.getElementById('progress-container');
-    const progressBar = document.getElementById('progress-bar-fill');
+    const progressFill = document.getElementById('progress-bar-fill');
     const progressText = document.getElementById('progress-text');
-    const runClipBtn = document.getElementById('run-clip-farm-btn');
+    const progressPct = document.getElementById('progress-pct');
+    const runBtn = document.getElementById('run-clip-farm-btn');
 
     progressContainer.classList.remove('hidden');
-    progressBar.style.width = '10%';
-    progressText.textContent = 'Initializing AI Brainstorming...';
+    progressFill.style.width = '5%';
     if (pollingInterval) clearInterval(pollingInterval);
 
     pollingInterval = setInterval(async () => {
@@ -120,47 +116,102 @@ function startStatusPolling(jobId) {
             const data = await res.json();
 
             if (data.status !== 'idle' && data.status !== 'queued') {
-                progressBar.style.width = data.progress + '%';
+                const pct = Math.max(5, data.progress);
+                progressFill.style.width = pct + '%';
+                if (progressPct) progressPct.textContent = pct + '%';
                 progressText.textContent = data.message;
             }
 
             if (data.progress >= 100 || data.status === 'complete' || data.status === 'error') {
                 clearInterval(pollingInterval);
                 localStorage.removeItem('active_job_id');
-                runClipBtn.disabled = false;
-                runClipBtn.textContent = '▶️ Find & Post Clip Now';
+                runBtn.disabled = false;
+                runBtn.innerHTML = `
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                        <path d="M3 2.5L13.5 8L3 13.5V2.5Z" fill="currentColor"/>
+                    </svg>
+                    Find & Post Clip Now
+                `;
+                progressFill.style.width = '0%';
                 setTimeout(() => progressContainer.classList.add('hidden'), 4000);
 
                 if (data.url) {
-                    addMessage('Director AI', `🎬 Your video is live!<br><a href="${data.url}" target="_blank" style="color:#60a5fa;">Watch on YouTube ↗</a>`, 'ai-message');
+                    addMessage('Director AI', `Video is live! <a href="${data.url}" target="_blank">Watch on YouTube ↗</a>`);
+                    showToast('Video posted to YouTube!', '#10b981');
                 } else if (data.status === 'error') {
-                    addMessage('Director AI', `⚠️ Error: ${data.message}`, 'ai-message');
+                    addMessage('Director AI', `Error: ${data.message}`);
+                    showToast('Generation failed — see activity log', '#ef4444');
                 }
             }
         } catch (e) {
             console.error(e);
             clearInterval(pollingInterval);
             localStorage.removeItem('active_job_id');
-            runClipBtn.disabled = false;
-            runClipBtn.textContent = '▶️ Find & Post Clip Now';
+            runBtn.disabled = false;
+            runBtn.innerHTML = `
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d="M3 2.5L13.5 8L3 13.5V2.5Z" fill="currentColor"/>
+                </svg>
+                Find & Post Clip Now
+            `;
         }
     }, 1500);
 }
 
-// ─── Run Clip Button ──────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-    const runClipBtn = document.getElementById('run-clip-farm-btn');
+// ─── On Page Load ─────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+    // Handle YouTube OAuth redirect
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('youtube') === 'connected') {
+        localStorage.setItem('youtube_connected', 'true');
+        window.history.replaceState({}, '', window.location.pathname);
+        showToast('YouTube connected successfully!');
+    } else if (urlParams.get('youtube') === 'error') {
+        const detail = urlParams.get('detail') || 'Unknown error';
+        showToast('YouTube connection failed: ' + detail, '#ef4444');
+        window.history.replaceState({}, '', window.location.pathname);
+    }
 
-    runClipBtn.addEventListener('click', async () => {
-        const isYouTubeConnected = localStorage.getItem('youtube_connected') === 'true';
-        if (!isYouTubeConnected) {
-            addMessage('Director AI', '⚠️ Please connect your YouTube account first using the button on the left!', 'ai-message');
+    // Check YouTube status from server
+    try {
+        const res = await fetch('/api/v1/auth/youtube/status');
+        const data = await res.json();
+        if (data.connected) localStorage.setItem('youtube_connected', 'true');
+        updateYouTubeUI(data.connected);
+    } catch (e) {
+        updateYouTubeUI(localStorage.getItem('youtube_connected') === 'true');
+    }
+
+    // Set user cookie
+    if (!document.cookie.split('; ').find(r => r.startsWith('user_id='))) {
+        document.cookie = `user_id=user_${Math.floor(Math.random()*100000)};path=/;max-age=31536000`;
+    }
+
+    // Resume polling if a job was running before page refresh
+    const activeJobId = localStorage.getItem('active_job_id');
+    if (activeJobId) {
+        const runBtn = document.getElementById('run-clip-farm-btn');
+        runBtn.disabled = true;
+        runBtn.textContent = 'Running...';
+        startStatusPolling(activeJobId);
+    }
+});
+
+// ─── Generate Button ──────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    const runBtn = document.getElementById('run-clip-farm-btn');
+
+    runBtn.addEventListener('click', async () => {
+        const isConnected = localStorage.getItem('youtube_connected') === 'true';
+        if (!isConnected) {
+            addMessage('Director AI', 'Please connect your YouTube account first using the **Connect YouTube** button in the top right.');
+            showToast('Connect YouTube first', '#f59e0b');
             return;
         }
 
         const niche = document.getElementById('niche-input').value.trim() || 'motivation';
-        runClipBtn.disabled = true;
-        runClipBtn.textContent = '⏳ Running...';
+        runBtn.disabled = true;
+        runBtn.textContent = 'Running...';
 
         try {
             const res = await fetch('/api/v1/generate-clip', {
@@ -171,36 +222,48 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (res.status === 402) {
                 document.getElementById('paywall-modal').classList.remove('hidden');
-                runClipBtn.textContent = '▶️ Find & Post Clip Now';
-                runClipBtn.disabled = false;
+                runBtn.disabled = false;
+                runBtn.innerHTML = `
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                        <path d="M3 2.5L13.5 8L3 13.5V2.5Z" fill="currentColor"/>
+                    </svg>
+                    Find & Post Clip Now
+                `;
                 return;
             }
 
             const data = await res.json();
             if (data.job_id) {
                 localStorage.setItem('active_job_id', data.job_id);
-                addMessage('Director AI', `🔍 Starting pipeline for **${niche}**.\n\nWatch the progress bar above!`, 'ai-message');
+                addMessage('Director AI', `Pipeline started for **${niche}**. Watch the progress bar!`);
                 startStatusPolling(data.job_id);
             } else {
-                runClipBtn.disabled = false;
-                runClipBtn.textContent = '▶️ Find & Post Clip Now';
+                runBtn.disabled = false;
+                runBtn.innerHTML = `
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                        <path d="M3 2.5L13.5 8L3 13.5V2.5Z" fill="currentColor"/>
+                    </svg>
+                    Find & Post Clip Now
+                `;
             }
         } catch (e) {
-            addMessage('Director AI', '❌ Connection error. Please try again.', 'ai-message');
-            runClipBtn.disabled = false;
-            runClipBtn.textContent = '▶️ Find & Post Clip Now';
+            addMessage('Director AI', 'Connection error. Please try again.');
+            runBtn.disabled = false;
+            runBtn.innerHTML = `
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d="M3 2.5L13.5 8L3 13.5V2.5Z" fill="currentColor"/>
+                </svg>
+                Find & Post Clip Now
+            `;
         }
     });
-});
 
-// ─── Paywall Modal ────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
+    // Paywall modal buttons
     document.getElementById('checkout-btn').addEventListener('click', async () => {
         const res = await fetch('/api/v1/create-checkout-session', { method: 'POST' });
         const data = await res.json();
         if (data.checkout_url) window.location.href = data.checkout_url;
     });
-
     document.getElementById('close-modal').addEventListener('click', () => {
         document.getElementById('paywall-modal').classList.add('hidden');
     });
