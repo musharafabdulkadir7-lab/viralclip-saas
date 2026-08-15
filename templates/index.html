@@ -169,9 +169,17 @@
                 <a href="#" id="start-worker-btn" class="btn btn-generate" style="flex: 1;" onclick="startWorkerURI()">
                     ⚡ Start Worker Now
                 </a>
-                <a href="/static/client_worker.py" download="ClipAI_Worker.py" class="btn btn-outline" style="flex: 1;" title="First time? Download the App">
+                <a href="/static/ClipAI_Worker.exe" download="ClipAI_Worker.exe" class="btn btn-outline" style="flex: 1;" title="First time? Download the App" onclick="showDownloadTip()">
                     Download App
                 </a>
+            </div>
+            
+            <!-- Download Tip Modal -->
+            <div id="download-tip" style="display: none; margin-top: 12px; padding: 12px; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 6px; text-align: left;">
+                <strong style="color: #3b82f6; font-size: 13px; display: block; margin-bottom: 4px;">⬇️ Download Started!</strong>
+                <p style="font-size: 12px; color: var(--text-2); margin: 0; line-height: 1.4;">
+                    Look at the <strong>top right corner</strong> of your browser. Click the downloaded file to open it instantly. Once open, it sets itself up automatically!
+                </p>
             </div>
             
             <button id="close-worker-modal" class="btn btn-ghost" style="margin-top: 8px;" onclick="document.getElementById('worker-modal').classList.add('hidden')">I'll do it later</button>
@@ -182,6 +190,9 @@
         function startWorkerURI() {
             const userId = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1] || 'demo_user_123';
             window.location.href = `clipai://start?user_id=${userId}`;
+        }
+        function showDownloadTip() {
+            document.getElementById('download-tip').style.display = 'block';
         }
     </script>
     <script src="/static/app.js?v=3"></script>
