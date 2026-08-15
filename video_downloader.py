@@ -67,6 +67,8 @@ def download_video_and_subs(url: str, video_id: str) -> dict:
         # Speed: use 8 parallel fragment downloads
         "concurrent_fragment_downloads": 8,
         "ffmpeg_location": ffmpeg_exe,
+        # Bypass YouTube bot detection by using mobile clients
+        "extractor_args": {"youtube": {"player_client": ["ios", "web_creator"]}},
     }
 
     if cookies_file:
