@@ -77,28 +77,30 @@ def cut_and_format_clip(
     # setpts=PTS/1.05   → 1.05x speed (changes video timing/fingerprint)
     # crop=ih*9/16:ih   → center crop to 9:16
     # scale=1080:1920   → upscale to Shorts resolution
-    # eq=...            → color grade: slight contrast + saturation boost
+    # eq=...            → color grade: toned down to look natural but slightly tweaked
+    # unsharp=...       → adds a subtle crispness/quality improvement
     # drawtext #1       → main caption at bottom center
     # drawtext #2       → small watermark in top-left corner
     vf_filter = (
         "setpts=PTS/1.05,"
         "crop=ih*9/16:ih,"
         "scale=1080:1920,"
-        "eq=contrast=1.08:brightness=0.02:saturation=1.12,"
+        "eq=contrast=1.03:brightness=0.01:saturation=1.06,"
+        "unsharp=5:5:1.0:5:5:0.0,"
         f"drawtext=text='{safe_caption}':"
-        "fontsize=32:"
+        "fontsize=36:"
         "fontcolor=white:"
         "borderw=2:"
         "bordercolor=black:"
         "x=(w-text_w)/2:"
-        "y=h-text_h-160:"
+        "y=h-text_h-180:"
         "font=Arial Bold:"
         "box=1:"
         "boxcolor=black@0.60:"
-        "boxborderw=14:"
+        "boxborderw=16:"
         "fix_bounds=1,"
         f"drawtext=text='{safe_watermark}':"
-        "fontsize=24:"
+        "fontsize=26:"
         "fontcolor=white@0.75:"
         "borderw=1:"
         "bordercolor=black@0.5:"
@@ -121,10 +123,10 @@ def cut_and_format_clip(
         "-vf", vf_filter,
         "-af", af_filter,
         "-c:v", "libx264",
-        "-preset", "fast",
-        "-crf", "23",
+        "-preset", "medium",  # Better compression quality than 'fast'
+        "-crf", "18",         # Visually lossless quality (default was 23)
         "-c:a", "aac",
-        "-b:a", "128k",
+        "-b:a", "192k",       # Better audio bitrate
         "-movflags", "+faststart",
         output_path,
     ]

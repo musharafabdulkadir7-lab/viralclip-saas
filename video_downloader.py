@@ -61,8 +61,8 @@ def download_video_and_subs(url: str, video_id: str) -> dict:
         os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
 
     ydl_opts = {
-        # 480p downloads ~2x faster than 720p — still fine for Shorts
-        "format": "bestvideo[height<=480]+bestaudio/best[height<=480]/bestvideo+bestaudio/best",
+        # Download at up to 1080p for high-quality Shorts
+        "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best",
         "outtmpl": output_template,
         "writeautomaticsub": True,
         "subtitleslangs": ["en"],
