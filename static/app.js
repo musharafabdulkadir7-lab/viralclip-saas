@@ -27,6 +27,38 @@ async function checkWorkerHeartbeat() {
 }
 setInterval(checkWorkerHeartbeat, 5000);
 
+// ─── Pipeline Step Indicator ──────────────────────────────────────────────────
+function updatePipelineSteps(pct) {
+    // Steps: search (10%), download (25%), cut (60%), upload (85%)
+    const steps = [
+        { id: 'step-search',   threshold: 10 },
+        { id: 'step-download', threshold: 25 },
+        { id: 'step-cut',      threshold: 60 },
+        { id: 'step-upload',   threshold: 85 },
+    ];
+    steps.forEach((step, i) => {
+        const el = document.getElementById(step.id);
+        if (!el) return;
+        const nextThreshold = steps[i + 1]?.threshold ?? 101;
+        if (pct >= nextThreshold) {
+            el.className = 'pipeline-step done';
+        } else if (pct >= step.threshold) {
+            el.className = 'pipeline-step active';
+        } else {
+            el.className = 'pipeline-step';
+        }
+    });
+}
+
+function resetPipelineSteps() {
+    ['step-search','step-download','step-cut','step-upload'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.className = 'pipeline-step';
+    });
+}
+
+
+
 // ─── YouTube Connection State ─────────────────────────────────────────────────
 function updateYouTubeUI(connected) {
     const dot = document.getElementById('yt-dot');
@@ -149,6 +181,8 @@ function startStatusPolling(jobId) {
                 progressFill.style.width = pct + '%';
                 if (progressPct) progressPct.textContent = pct + '%';
                 progressText.textContent = data.message;
+                // Animate pipeline steps
+                updatePipelineSteps(pct);
             }
 
             if (data.progress >= 100 || data.status === 'complete' || data.status === 'error') {
