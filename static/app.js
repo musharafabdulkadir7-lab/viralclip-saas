@@ -223,11 +223,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             const res = await fetch('/api/v1/job-status/' + activeJobId);
             const data = await res.json();
-            // If the job is complete, errored, or stuck at 0% (initializing) — clear it, don't resume
-            if (data.status === 'complete' || data.status === 'error' || data.progress === 0 || !data.status || data.status === 'idle') {
+            // Only clear if genuinely done or job not found — NOT just because progress is 0
+            const terminalStates = ['complete', 'error', 'idle'];
+            if (!data.status || terminalStates.includes(data.status) || data.status === 'unknown') {
                 localStorage.removeItem('active_job_id');
             } else {
-                // Job is genuinely still running — resume polling
+                // Job is genuinely still running (queued, processing, running) — resume polling
                 const runBtn = document.getElementById('run-clip-farm-btn');
                 runBtn.disabled = true;
                 runBtn.textContent = 'Running...';
