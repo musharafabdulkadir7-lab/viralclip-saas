@@ -164,6 +164,28 @@ class JobCompletePayload(BaseModel):
     title: str = ""
     niche: str = ""
 
+@app.get("/api/v1/user/youtube-creds")
+async def get_youtube_creds(user_id: str):
+    """Called by the desktop worker to get YouTube OAuth credentials."""
+    if not supabase:
+        return {"error": "Database not connected"}
+    try:
+        res = supabase.table("users").select(
+            "youtube_access_token, youtube_refresh_token"
+        ).eq("id", user_id).execute()
+        if res.data and res.data[0].get("youtube_refresh_token"):
+            return {
+                "token": res.data[0].get("youtube_access_token"),
+                "refresh_token": res.data[0].get("youtube_refresh_token"),
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "user_id": user_id
+            }
+        return {"error": "YouTube not connected for this user"}
+    except Exception as e:
+        print(f"Error fetching YouTube creds: {e}")
+        return {"error": str(e)}
+
 @app.get("/api/v1/debug/queue")
 async def debug_queue(user_id: str):
     """Diagnostic endpoint to check Redis queue state."""

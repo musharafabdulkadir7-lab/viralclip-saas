@@ -28,7 +28,7 @@ except ImportError as e:
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
-def update_job_status(job_id: str, status: str, progress: int, message: str, url: str = "", title: str = "", niche: str = ""):
+def update_job_status(job_id: str, status: str, progress: int, message: str, url: str = "", title: str = "", niche: str = "", user_id: str = ""):
     """Updates job progress back to the cloud via HTTP API."""
     # Read fresh each time so .exe env vars are always respected
     API_BASE_URL = os.environ.get("API_BASE_URL", "https://viralclip-saas.onrender.com")
@@ -43,7 +43,7 @@ def update_job_status(job_id: str, status: str, progress: int, message: str, url
                 "url": url,
                 "title": title,
                 "niche": niche
-            }, params={"user_id": user_id}, timeout=10)
+            }, params={"user_id": user_id or "unknown"}, timeout=10)
         else:
             requests.post(f"{API_BASE_URL}/api/v1/worker/progress", json={
                 "job_id": job_id,
@@ -55,26 +55,42 @@ def update_job_status(job_id: str, status: str, progress: int, message: str, url
     except Exception as e:
         print(f"Failed to update cloud progress: {e}")
 
+def fetch_youtube_creds(user_id: str):
+    """Fetches YouTube credentials via the backend API — no Supabase needed on customer PC."""
+    API_BASE_URL = os.environ.get("API_BASE_URL", "https://viralclip-saas.onrender.com")
+    try:
+        import requests
+        res = requests.get(f"{API_BASE_URL}/api/v1/user/youtube-creds",
+            params={"user_id": user_id}, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            if data.get("refresh_token"):
+                return data
+    except Exception as e:
+        print(f"Failed to fetch YouTube creds: {e}")
+    return None
+
 def run_clip_pipeline(niche: str, user_id: str, job_id: str):
     """The heavy video processing pipeline. Runs in a background thread."""
 
     if not MODULES_AVAILABLE:
         update_job_status(job_id, "error", 0,
-            "Video agent modules not found on server. Set YOUTUBE_AGENT_DIR env var.")
+            "Video agent modules not found. Please re-download ClipAI Worker.",
+            user_id=user_id)
         return
 
     try:
-        update_job_status(job_id, "running", 10, "Searching for viral videos...")
+        update_job_status(job_id, "running", 10, "Searching for viral videos...", user_id=user_id)
         candidates = video_finder.find_viral_videos(niche=niche)
         if not candidates:
-            update_job_status(job_id, "error", 0, "No viral video found matching criteria.")
+            update_job_status(job_id, "error", 0, "No viral video found matching criteria.", user_id=user_id)
             return
 
         video = None
         dl = {}
         for i, candidate in enumerate(candidates):
             update_job_status(job_id, "running", 20 + i*5,
-                f"Downloading: {candidate['title'][:45]}...")
+                f"Downloading: {candidate['title'][:45]}...", user_id=user_id)
             dl = video_downloader.download_video_and_subs(candidate["url"], candidate["id"])
             if dl.get("video_path"):
                 video = candidate
@@ -82,10 +98,10 @@ def run_clip_pipeline(niche: str, user_id: str, job_id: str):
 
         if not video or not dl.get("video_path"):
             err = dl.get("error", "Unknown download error")
-            update_job_status(job_id, "error", 0, f"Download failed: {err}")
+            update_job_status(job_id, "error", 0, f"Download failed: {err}", user_id=user_id)
             return
 
-        update_job_status(job_id, "running", 50, "AI is finding the best segment...")
+        update_job_status(job_id, "running", 50, "AI is finding the best segment...", user_id=user_id)
         if dl.get("sub_path"):
             clip_info = clip_finder.find_best_segment(dl["sub_path"], niche=niche)
         else:
@@ -93,7 +109,7 @@ def run_clip_pipeline(niche: str, user_id: str, job_id: str):
                          "caption": niche.upper(), "reason": "No subs", "num_parts": 2}
 
         update_job_status(job_id, "running", 70,
-            f"Cutting {clip_info.get('num_parts', 2)} parts & adding captions...")
+            f"Cutting {clip_info.get('num_parts', 2)} parts & adding captions...", user_id=user_id)
         clip_paths = clip_cutter.cut_multipart_clips(
             video_path=dl["video_path"],
             start_sec=clip_info["start_sec"],
@@ -104,33 +120,21 @@ def run_clip_pipeline(niche: str, user_id: str, job_id: str):
         )
 
         if not clip_paths:
-            update_job_status(job_id, "error", 0, "Clip cutting failed.")
+            update_job_status(job_id, "error", 0, "Clip cutting failed.", user_id=user_id)
             return
 
-        update_job_status(job_id, "running", 85, "Uploading to YouTube...")
+        update_job_status(job_id, "running", 85, "Uploading to YouTube...", user_id=user_id)
         caption = clip_info.get("caption", niche.title())
         title = f"#Shorts {caption} (Part 1) #{niche.replace(' ', '')}"
         desc = f"{caption} - Part 1\n\n#Shorts #{niche.replace(' ', '')} #viral"
 
-        # Fetch credentials from Supabase
-        from supabase import create_client
-        supabase_url = os.environ.get("SUPABASE_URL", "")
-        supabase_key = os.environ.get("SUPABASE_KEY", "")
-        creds_dict = None
-        if supabase_url and supabase_key:
-            sb = create_client(supabase_url, supabase_key)
-            res = sb.table("users").select("youtube_access_token, youtube_refresh_token").eq("id", user_id).execute()
-            if res.data and res.data[0].get("youtube_refresh_token"):
-                creds_dict = {
-                    "token": res.data[0].get("youtube_access_token"),
-                    "refresh_token": res.data[0].get("youtube_refresh_token"),
-                    "client_id": os.environ.get("GOOGLE_CLIENT_ID", ""),
-                    "client_secret": os.environ.get("GOOGLE_CLIENT_SECRET", ""),
-                    "user_id": user_id  # Needed so token refresh saves to correct account
-                }
+        # Fetch credentials from backend API (no Supabase needed on customer PC)
+        creds_dict = fetch_youtube_creds(user_id)
 
         if not creds_dict:
-            update_job_status(job_id, "error", 100, "YouTube account not connected. Please connect your account in Settings.")
+            update_job_status(job_id, "error", 85,
+                "YouTube account not connected. Please connect your account on the website first.",
+                user_id=user_id)
             return
 
         upload_res = youtube_uploader.upload_video_to_youtube(
@@ -142,27 +146,13 @@ def run_clip_pipeline(niche: str, user_id: str, job_id: str):
         if upload_res.get("status") == "success":
             video_finder.mark_video_used(video["id"], video["title"])
             youtube_url = upload_res.get("url", "")
-            
-            # Save to clips table for analytics
-            try:
-                if supabase_url and supabase_key:
-                    _sb = create_client(supabase_url, supabase_key)
-                    _sb.table("clips").insert({
-                        "user_id": user_id,
-                        "youtube_url": youtube_url,
-                        "title": title,
-                        "niche": niche,
-                        "views": 0,
-                    }).execute()
-            except Exception as e:
-                print(f"Analytics save error: {e}")
-                
-            update_job_status(job_id, "complete", 100, "Done! Video is live.", youtube_url, title, niche)
+            update_job_status(job_id, "complete", 100, "Done! Video is live.",
+                youtube_url, title, niche, user_id=user_id)
         else:
             update_job_status(job_id, "error", 100,
-                f"Upload failed: {upload_res.get('error')}")
+                f"Upload failed: {upload_res.get('error')}", user_id=user_id)
 
     except Exception as e:
-        update_job_status(job_id, "error", 0, f"Critical Pipeline Error: {str(e)}")
+        update_job_status(job_id, "error", 0, f"Critical Pipeline Error: {str(e)}", user_id=user_id)
         raise e
 
