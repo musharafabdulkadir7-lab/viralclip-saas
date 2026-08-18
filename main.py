@@ -293,7 +293,35 @@ async def analyze_transcript(payload: AnalyzeRequest, user_id: str):
     """
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
-        return {"error": "GEMINI_API_KEY not configured on server"}
+        # Heuristic fallback: pick the densest part of the transcript (most words per minute)
+        # Parse timestamps from transcript lines like "[MM:SS] text"
+        import re as re_mod
+        lines = payload.transcript.strip().split("\n")
+        entries = []
+        for line in lines:
+            m = re_mod.match(r"\[(\d+):(\d+)\]\s+(.*)", line)
+            if m:
+                t = int(m.group(1))*60 + int(m.group(2))
+                entries.append((t, m.group(3)))
+        
+        best_start, best_end = 60, 240
+        if len(entries) >= 4:
+            # Slide a 3-minute window and find max word density
+            best_words = 0
+            for i in range(len(entries)):
+                window_start = entries[i][0]
+                window_end = window_start + 180
+                words = sum(len(e[1].split()) for e in entries if window_start <= e[0] < window_end)
+                if words > best_words:
+                    best_words = words
+                    best_start = window_start
+                    best_end = window_end
+        
+        return {
+            "start_sec": best_start,
+            "end_sec": best_end,
+            "caption": payload.niche.title()
+        }
         
     try:
         from google import genai
