@@ -163,19 +163,24 @@ async def worker_poll(user_id: str):
     if not redis_client:
         return {"job": None}
     
-    # Heartbeat
-    redis_client.setex(f"worker_heartbeat:{user_id}", 30, "alive")
+    try:
+        # Heartbeat
+        redis_client.setex(f"worker_heartbeat:{user_id}", 30, "alive")
 
-    job = redis_client.rpop(f"worker_queue:{user_id}")
-    if job:
-        # Also update status to 'processing'
-        job_data = json.loads(job)
-        redis_client.hset(f"job:{job_data['job_id']}", mapping={
-            "status": "processing",
-            "message": "Local worker started pipeline...",
-            "progress": 5
-        })
-        return {"job": job_data}
+        job = redis_client.rpop(f"worker_queue:{user_id}")
+        if job:
+            # Decode bytes if needed
+            if isinstance(job, bytes):
+                job = job.decode("utf-8")
+            job_data = json.loads(job)
+            redis_client.hset(f"job:{job_data['job_id']}", mapping={
+                "status": "processing",
+                "message": "Local worker started pipeline...",
+                "progress": 5
+            })
+            return {"job": job_data}
+    except Exception as e:
+        print(f"Poll error: {e}")
     return {"job": None}
 
 @app.post("/api/v1/worker/complete")
