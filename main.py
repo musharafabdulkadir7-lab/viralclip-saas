@@ -328,7 +328,7 @@ CAPTION: How I Built My First Million
 REASON: This segment tells a complete rags-to-riches story with a clear arc."""
 
         response = client.models.generate_content(
-            model="gemini-3.5-flash",
+            model="gemini-1.5-flash",
             contents=prompt,
             config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=256)
         )
