@@ -45,10 +45,12 @@ def update_job_status(job_id: str, status: str, progress: int, message: str, url
                 "niche": niche
             }, params={"user_id": user_id}, timeout=10)
         else:
-            requests.post(f"{API_BASE_URL}/api/v1/worker/progress", params={
+            requests.post(f"{API_BASE_URL}/api/v1/worker/progress", json={
                 "job_id": job_id,
+                "status": status,
                 "progress": progress,
-                "message": message
+                "message": message,
+                "url": url
             }, timeout=5)
     except Exception as e:
         print(f"Failed to update cloud progress: {e}")
