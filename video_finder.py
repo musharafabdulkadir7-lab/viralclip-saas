@@ -153,7 +153,13 @@ def _search_via_ytdlp(niche: str, max_results: int = 15) -> list:
     search_query = f"ytsearch{max_results}:{query}"
     log(f"[VideoFinder] yt-dlp fallback search: '{query}'")
 
-    ydl_opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "skip_download": True}
+    ydl_opts = {
+        "quiet": True, 
+        "no_warnings": True, 
+        "noplaylist": True, 
+        "skip_download": True,
+        "ignoreerrors": True  # Skip age-restricted or unavailable videos
+    }
     candidates = []
     last_error = None
 
