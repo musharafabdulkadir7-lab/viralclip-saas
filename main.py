@@ -1,5 +1,6 @@
 import os
 import uuid
+import json
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.staticfiles import StaticFiles
@@ -121,18 +122,23 @@ async def generate_clip(payload: ClipRequest, request: Request):
         })
         redis_client.expire(f"job:{job_id}", 86400)
 
-    # Mark free clip as used if on free tier
-    if supabase and user["license"] == "free_tier":
-        supabase.table("users").update({"free_clip_used": True}).eq("id", user_id).execute()
+    # Mark free clip as used if on free tier (non-blocking)
+    if supabase and user.get("license") == "free_tier":
+        try:
+            supabase.table("users").update({"free_clip_used": True}).eq("id", user_id).execute()
+        except Exception as e:
+            print(f"Warning: Could not update free_clip_used: {e}")
 
     # Queue the job for the client worker
-    import json
     if redis_client:
         redis_client.lpush(f"worker_queue:{user_id}", json.dumps({
             "job_id": job_id,
             "niche": payload.niche,
             "user_id": user_id
         }))
+        print(f"[Queue] Job {job_id} pushed to worker_queue:{user_id}")
+    else:
+        print("[Queue] WARNING: redis_client is None — job not queued!")
 
     return {"status": "success", "job_id": job_id}
 
@@ -157,6 +163,24 @@ class JobCompletePayload(BaseModel):
     url: str = ""
     title: str = ""
     niche: str = ""
+
+@app.get("/api/v1/debug/queue")
+async def debug_queue(user_id: str):
+    """Diagnostic endpoint to check Redis queue state."""
+    if not redis_client:
+        return {"error": "Redis not connected"}
+    try:
+        queue_len = redis_client.llen(f"worker_queue:{user_id}")
+        heartbeat = redis_client.get(f"worker_heartbeat:{user_id}")
+        # Peek at the queue without consuming
+        items = redis_client.lrange(f"worker_queue:{user_id}", 0, -1)
+        return {
+            "queue_length": queue_len,
+            "worker_alive": bool(heartbeat),
+            "queue_items": [json.loads(i) if i else None for i in items]
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 @app.get("/api/v1/worker/poll")
 async def worker_poll(user_id: str):
