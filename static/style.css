@@ -2,37 +2,44 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:        #04060d;
-  --surface:   #090e1a;
-  --surface-2: #0e1525;
-  --surface-3: #141d30;
-  --surface-4: #1a253c;
+  /* ── Warm Charcoal Surfaces ── */
+  --bg:        #0c0b09;
+  --surface:   #131109;
+  --surface-2: #1a180f;
+  --surface-3: #211e13;
+  --surface-4: #2a2618;
 
-  --border:       rgba(255,255,255,0.06);
-  --border-hover: rgba(255,255,255,0.12);
-  --border-active:rgba(255,255,255,0.18);
+  /* ── Borders ── */
+  --border:        rgba(255, 220, 120, 0.08);
+  --border-hover:  rgba(255, 220, 120, 0.16);
+  --border-active: rgba(255, 220, 120, 0.28);
 
-  --text:   #e8eeff;
-  --text-2: #7a8fad;
-  --text-3: #3d5068;
+  /* ── Text ── */
+  --text:   #f5f0e8;
+  --text-2: #a09070;
+  --text-3: #5a4e38;
 
-  --blue:       hsl(217, 91%, 60%);
-  --blue-light: hsl(217, 91%, 70%);
-  --blue-dim:   hsla(217, 91%, 60%, 0.10);
-  --blue-glow:  hsla(217, 91%, 60%, 0.20);
+  /* ── Gold (Primary Accent) ── */
+  --blue:       hsl(43, 90%, 56%);
+  --blue-light: hsl(43, 90%, 70%);
+  --blue-dim:   hsla(43, 90%, 56%, 0.10);
+  --blue-glow:  hsla(43, 90%, 56%, 0.22);
 
-  --green:      hsl(158, 64%, 52%);
-  --green-dim:  hsla(158, 64%, 52%, 0.10);
-  --green-glow: hsla(158, 64%, 52%, 0.25);
+  /* ── Soft Gold / Success ── */
+  --green:      hsl(43, 80%, 68%);
+  --green-dim:  hsla(43, 80%, 68%, 0.10);
+  --green-glow: hsla(43, 80%, 68%, 0.25);
 
-  --red:     hsl(0, 82%, 63%);
-  --red-dim: hsla(0, 82%, 63%, 0.10);
+  /* ── Red / Error ── */
+  --red:     hsl(0, 75%, 62%);
+  --red-dim: hsla(0, 75%, 62%, 0.10);
 
-  --amber:     hsl(43, 96%, 58%);
-  --amber-dim: hsla(43, 96%, 58%, 0.10);
+  /* ── Amber (reused for warnings) ── */
+  --amber:     hsl(38, 95%, 55%);
+  --amber-dim: hsla(38, 95%, 55%, 0.10);
 
-  --font-sans:  'Plus Jakarta Sans', 'Inter', -apple-system, sans-serif;
-  --font-mono:  'JetBrains Mono', 'Fira Code', monospace;
+  --font-sans: 'Plus Jakarta Sans', 'Inter', -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
 
   --radius:    14px;
   --radius-sm: 9px;
@@ -91,10 +98,10 @@ body {
 }
 .logo-icon {
   width: 32px; height: 32px;
-  background: linear-gradient(135deg, #2563eb, #0ea5e9);
+  background: linear-gradient(135deg, hsl(43,90%,50%), hsl(38,85%,38%));
   border-radius: 9px;
   display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 0 0 1px rgba(255,255,255,0.1), 0 4px 12px rgba(37,99,235,0.4);
+  box-shadow: 0 0 0 1px rgba(255,200,80,0.25), 0 4px 14px hsla(43,90%,50%,0.35);
 }
 .logo-text {
   font-size: 16px;
@@ -199,9 +206,9 @@ body {
   font-size: 15px;
   font-weight: 700;
   border-radius: var(--radius);
-  background: linear-gradient(135deg, hsl(158,64%,48%), hsl(158,64%,40%));
-  color: #fff;
-  box-shadow: 0 1px 0 rgba(255,255,255,0.12) inset, 0 4px 24px var(--green-glow);
+  background: linear-gradient(135deg, hsl(43,90%,52%), hsl(38,85%,40%));
+  color: #1a1500;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.18) inset, 0 4px 24px var(--green-glow);
   letter-spacing: -0.2px;
 }
 .btn-generate:hover:not(:disabled) {
@@ -224,12 +231,12 @@ body {
 .btn-upgrade {
   width: 100%;
   padding: 14px;
-  background: linear-gradient(135deg, hsl(217,91%,58%), hsl(217,91%,50%));
-  color: white;
+  background: linear-gradient(135deg, hsl(43,90%,52%), hsl(38,85%,38%));
+  color: #1a1500;
   font-size: 15px;
   font-weight: 700;
   border-radius: var(--radius);
-  box-shadow: 0 1px 0 rgba(255,255,255,0.15) inset, 0 4px 24px var(--blue-glow);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.18) inset, 0 4px 24px var(--blue-glow);
   margin-bottom: 12px;
   letter-spacing: -0.2px;
 }
@@ -355,10 +362,10 @@ body {
 .progress-fill {
   height: 100%;
   width: 0%;
-  background: linear-gradient(90deg, var(--blue), var(--green));
+  background: linear-gradient(90deg, hsl(38,85%,42%), hsl(43,90%,62%), #fff8e0);
   border-radius: 99px;
   transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 0 0 8px var(--blue-glow);
+  box-shadow: 0 0 10px var(--blue-glow);
 }
 .progress-step { font-size: 12.5px; color: var(--text-2); letter-spacing: -0.1px; }
 
@@ -592,7 +599,7 @@ body {
   position: absolute;
   top: 0; left: 0; right: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent);
+  background: linear-gradient(90deg, transparent, rgba(255,200,80,0.18), transparent);
 }
 
 @keyframes slideUp {
