@@ -29,6 +29,7 @@
             </a>
             <nav class="top-nav">
                 <button class="nav-tab active" id="tab-generate"   onclick="switchTab('generate')">Generate</button>
+                <button class="nav-tab"        id="tab-autopost"   onclick="switchTab('autopost')">Auto Post</button>
                 <button class="nav-tab"        id="tab-analytics"  onclick="switchTab('analytics')">Analytics</button>
             </nav>
         </div>
@@ -182,6 +183,52 @@
                 <div class="table-header">Recent Uploads</div>
                 <div id="videos-table-body">
                     <div class="table-empty">No videos posted yet. Generate your first clip!</div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- ── Auto Post Tab ─────────────────────────────── -->
+    <main class="tab-content hidden" id="tab-content-autopost">
+        <div class="analytics-layout" style="max-width: 800px;">
+            <div class="analytics-header-row" style="margin-bottom: 0;">
+                <div>
+                    <h2 class="hero-title" style="font-size: 32px; text-align: left; margin-bottom: 8px;">Auto <span>Post</span></h2>
+                    <p class="hero-subtitle" style="text-align: left;">Schedule clips to be generated and posted automatically while you sleep.</p>
+                </div>
+            </div>
+
+            <div class="glass-card" style="padding: 40px;">
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <h3 style="color:var(--text);font-size:18px;margin-bottom:6px;">Enable Auto Post</h3>
+                        <p style="color:var(--text-2);font-size:14px;">The Desktop Worker must be running at the scheduled time.</p>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="autopost-enable">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+
+                <hr style="border:0; border-top:1px solid var(--border); margin:30px 0;">
+
+                <div class="setting-group" style="display:flex; flex-direction:column; gap:20px;">
+                    <div>
+                        <label class="input-label">Posting Time (UTC)</label>
+                        <input type="time" id="autopost-time" class="niche-input-lg" style="max-width: 200px;">
+                        <p style="color:var(--text-3);font-size:12px;margin-top:8px;">Format: HH:MM. Ensure your desktop worker is online at this time.</p>
+                    </div>
+                    
+                    <div>
+                        <label class="input-label">Target Niche or Creator</label>
+                        <input type="text" id="autopost-niche" class="niche-input-lg" placeholder="e.g. Finance, Tech, MrBeast">
+                    </div>
+                </div>
+
+                <div style="margin-top: 40px; display:flex; justify-content:flex-end;">
+                    <button class="btn btn-generate-lg" onclick="saveAutoPostSettings()" id="btn-save-autopost">
+                        Save Schedule
+                    </button>
                 </div>
             </div>
         </div>

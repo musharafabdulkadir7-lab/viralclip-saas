@@ -1,6 +1,8 @@
 import os
 import uuid
 import json
+import asyncio
+from datetime import datetime
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.staticfiles import StaticFiles
@@ -40,6 +42,55 @@ except Exception as e:
 
 app = FastAPI(title="ViralClip AI SaaS")
 
+# Auto-Post Background Task
+async def auto_post_scheduler():
+    while True:
+        try:
+            # Check every minute, sleeping exactly to the start of the next minute
+            now = datetime.utcnow()
+            sleep_time = 60 - now.second
+            await asyncio.sleep(sleep_time)
+            
+            now = datetime.utcnow()
+            current_time_str = now.strftime("%H:%M")
+            print(f"[Scheduler] Checking auto-post schedules for time {current_time_str} UTC")
+            
+            if supabase and redis_client:
+                # Fetch users whose auto_post is enabled and time matches current UTC time
+                res = supabase.table("users").select("id, auto_post_niche").eq("auto_post_enabled", True).eq("auto_post_time", current_time_str).execute()
+                users_to_post = res.data or []
+                
+                for u in users_to_post:
+                    user_id = u["id"]
+                    niche = u.get("auto_post_niche", "motivation")
+                    
+                    # Generate a job
+                    job_id = str(uuid.uuid4())
+                    redis_client.hset(f"job:{job_id}", mapping={
+                        "status": "queued",
+                        "progress": 0,
+                        "message": "Auto-Post Scheduled Job queued...",
+                        "url": ""
+                    })
+                    redis_client.expire(f"job:{job_id}", 86400)
+                    
+                    # Push to worker
+                    redis_client.lpush(f"worker_queue:{user_id}", json.dumps({
+                        "job_id": job_id,
+                        "niche": niche,
+                        "user_id": user_id,
+                        "is_auto_post": True
+                    }))
+                    print(f"[Scheduler] Triggered auto-post job {job_id} for user {user_id}")
+                    
+        except Exception as e:
+            print(f"[Scheduler] Error in background loop: {e}")
+            await asyncio.sleep(60)
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(auto_post_scheduler())
+
 # Static files and templates
 BASE_DIR = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
@@ -47,6 +98,11 @@ templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
 # Schemas
 class ClipRequest(BaseModel):
+    niche: str
+
+class AutoPostSettings(BaseModel):
+    enabled: bool
+    time: str
     niche: str
 
 # Helper functions
@@ -99,6 +155,40 @@ async def get_analytics(request: Request):
     except Exception as e:
         print(f"Analytics error: {e}")
         return {"videos": [], "total_views": 0, "total_videos": 0, "avg_views": 0}
+
+@app.get("/api/v1/auto-post/settings")
+async def get_auto_post_settings(request: Request):
+    user_id = request.cookies.get("user_id", "demo_user_123")
+    if not supabase:
+        return {"enabled": False, "time": "12:00", "niche": "motivation"}
+    try:
+        res = supabase.table("users").select("auto_post_enabled, auto_post_time, auto_post_niche").eq("id", user_id).execute()
+        if res.data:
+            data = res.data[0]
+            return {
+                "enabled": data.get("auto_post_enabled", False),
+                "time": data.get("auto_post_time", "12:00"),
+                "niche": data.get("auto_post_niche", "motivation")
+            }
+    except Exception as e:
+        print(f"Error fetching auto-post settings: {e}")
+    return {"enabled": False, "time": "12:00", "niche": "motivation"}
+
+@app.post("/api/v1/auto-post/settings")
+async def save_auto_post_settings(settings: AutoPostSettings, request: Request):
+    user_id = request.cookies.get("user_id", "demo_user_123")
+    if not supabase:
+        return {"status": "success"}
+    try:
+        supabase.table("users").update({
+            "auto_post_enabled": settings.enabled,
+            "auto_post_time": settings.time,
+            "auto_post_niche": settings.niche
+        }).eq("id", user_id).execute()
+        return {"status": "success"}
+    except Exception as e:
+        print(f"Error saving auto-post settings: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save settings")
 
 @app.post("/api/v1/generate-clip")
 async def generate_clip(payload: ClipRequest, request: Request):

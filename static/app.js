@@ -85,6 +85,7 @@ function switchTab(tab) {
     document.getElementById('tab-content-' + tab).classList.remove('hidden');
     document.getElementById('tab-' + tab).classList.add('active');
     if (tab === 'analytics') loadAnalytics();
+    if (tab === 'autopost') loadAutoPostSettings();
 }
 
 // ─── Analytics ────────────────────────────────────────────────────────────────
@@ -359,3 +360,50 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('paywall-modal').classList.add('hidden');
     });
 });
+
+// ─── Auto Post ────────────────────────────────────────────────────────────────
+async function loadAutoPostSettings() {
+    try {
+        const res = await fetch('/api/v1/auto-post/settings');
+        const data = await res.json();
+        
+        document.getElementById('autopost-enable').checked = data.enabled || false;
+        document.getElementById('autopost-time').value = data.time || '12:00';
+        document.getElementById('autopost-niche').value = data.niche || 'motivation';
+    } catch (e) {
+        console.error('Failed to load auto post settings:', e);
+    }
+}
+
+async function saveAutoPostSettings() {
+    const btn = document.getElementById('btn-save-autopost');
+    const prevText = btn.textContent;
+    btn.textContent = 'Saving...';
+    btn.disabled = true;
+    
+    try {
+        const payload = {
+            enabled: document.getElementById('autopost-enable').checked,
+            time: document.getElementById('autopost-time').value || '12:00',
+            niche: document.getElementById('autopost-niche').value || 'motivation'
+        };
+        
+        const res = await fetch('/api/v1/auto-post/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        
+        if (res.ok) {
+            showToast('Auto Post Schedule Saved!');
+        } else {
+            showToast('Failed to save settings', '#ef4444');
+        }
+    } catch (e) {
+        console.error('Error saving:', e);
+        showToast('Error saving settings', '#ef4444');
+    } finally {
+        btn.textContent = prevText;
+        btn.disabled = false;
+    }
+}
