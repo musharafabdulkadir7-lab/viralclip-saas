@@ -100,8 +100,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     if not events: return False
     try:
-        # Changed font to Impact for bolder, higher quality Hormozi look, increased size to 115
-        ass_header = ass_header.replace("Arial,85", "Impact,115")
+        # Changed font to Impact for bolder, higher quality Hormozi look, size to 95 to prevent overflow, MarginV to 550
+        ass_header = ass_header.replace("Arial,85", "Impact,95").replace("750,1", "550,1")
         with open(output_ass, 'w', encoding='utf-8') as f:
             f.write(ass_header + '\n'.join(events))
         return True
@@ -162,9 +162,10 @@ def cut_and_format_clip(
         # Overlay foreground over blurred background
         "[bg_blurred][fg_scaled]overlay=(W-w)/2:(H-h)/2[merged]; "
         # Apply final color grade, unsharp, and texts onto merged result
+        # Changed caption y=h-text_h-350 to avoid Shorts description area, watermark y=200 to avoid top UI
         "[merged]eq=contrast=1.03:brightness=0.01:saturation=1.06,unsharp=5:5:1.0:5:5:0.0,"
-        f"drawtext=text='{safe_caption}':fontsize=36:fontcolor=white:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-text_h-180:font=Arial Bold:box=1:boxcolor=black@0.60:boxborderw=16:fix_bounds=1,"
-        f"drawtext=text='{safe_watermark}':fontsize=26:fontcolor=white@0.75:borderw=1:bordercolor=black@0.5:x=24:y=50:font=Arial:fix_bounds=1"
+        f"drawtext=text='{safe_caption}':fontsize=38:fontcolor=white:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-text_h-350:font=Arial Bold:box=1:boxcolor=black@0.60:boxborderw=16:fix_bounds=1,"
+        f"drawtext=text='{safe_watermark}':fontsize=28:fontcolor=white@0.75:borderw=1:bordercolor=black@0.5:x=30:y=200:font=Arial:fix_bounds=1"
         f"{ass_filter}[v_out]"
     )
 
