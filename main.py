@@ -246,9 +246,9 @@ async def generate_clip(payload: ClipRequest, request: Request):
     user_id = request.cookies.get("user_id", "demo_user_123")
     user = get_or_create_user(user_id)
 
-    # Enforce paywall on free tier (temporarily disabled for testing)
-    # if user["free_clip_used"] and user["license"] == "free_tier":
-    #     raise HTTPException(status_code=402, detail="Free trial clip used. Upgrade required.")
+    # Enforce paywall on free tier
+    if user.get("free_clip_used") and user.get("license") == "free_tier":
+        raise HTTPException(status_code=402, detail="Free trial clip used. Upgrade required.")
 
     # Create job ID and store status in Redis
     import threading

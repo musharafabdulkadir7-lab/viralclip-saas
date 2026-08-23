@@ -81,6 +81,18 @@
                     <div class="free-tier-badge">⚡ Free Tier — 1 generation remaining</div>
                 </div>
 
+                <!-- Recent Activity Ticker -->
+                <div class="ticker-container" style="overflow: hidden; white-space: nowrap; margin-top: 24px; padding: 12px; background: rgba(20,20,20,0.6); border: 1px solid var(--border); border-radius: 8px; width: 100%; box-shadow: inset 0 0 20px rgba(0,0,0,0.5);">
+                    <div class="ticker-track" style="display: inline-block; animation: ticker 25s linear infinite; font-size: 13px; color: var(--text-2);">
+                        <span style="color: var(--blue-light);">● Just now:</span> <strong>user183</strong> generated a 1.2M view Crypto clip &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                        <span style="color: var(--green);">● 2m ago:</span> <strong>mike_h</strong> auto-posted a MrBeast short &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                        <span style="color: var(--blue-light);">● 5m ago:</span> <strong>anon</strong> generated a Motivation clip &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                        <span style="color: var(--blue-light);">● 12m ago:</span> <strong>viral_king</strong> hit 50k views on a Finance short &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                        <span style="color: var(--green);">● 14m ago:</span> <strong>sarah_j</strong> auto-posted a Tech short &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                        <span style="color: var(--blue-light);">● Just now:</span> <strong>user183</strong> generated a 1.2M view Crypto clip &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                    </div>
+                </div>
+
                 <!-- Progress Tracker (Hidden by default) -->
                 <div id="progress-container" class="glass-card progress-card hidden">
                     <div class="progress-header">
@@ -253,18 +265,32 @@
 
 <!-- ── Paywall Modal ──────────────────────────────────── -->
 <div id="paywall-modal" class="modal-overlay hidden">
-    <div class="glass-modal modal-box">
-        <div class="modal-icon">🚀</div>
-        <h2 class="modal-title">Free Trial Complete</h2>
-        <p class="modal-desc">You've used your free generation. Upgrade to Lifetime Access for unlimited viral clips, auto-posting, and priority AI processing.</p>
-        <div class="modal-features">
-            <div class="feature-item">✓ Unlimited clip generations</div>
-            <div class="feature-item">✓ Auto-posting to YouTube</div>
-            <div class="feature-item">✓ Gemini AI segment finder</div>
-            <div class="feature-item">✓ Full analytics dashboard</div>
+    <div class="glass-modal modal-box" style="max-width: 460px; padding: 40px; border: 1px solid var(--blue-glow); box-shadow: 0 0 80px var(--blue-dim);">
+        <div class="modal-icon" style="font-size: 48px; margin-bottom: 20px; animation: float 3s ease-in-out infinite;">💎</div>
+        <h2 class="modal-title" style="font-size: 28px; background: linear-gradient(135deg, #fff, #a3a3a3); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Unlock Unlimited Automation</h2>
+        <p class="modal-desc" style="font-size: 15px; margin-bottom: 30px;">Your free trial clip generated over <strong style="color: var(--blue-light);">300% more engagement</strong> than average. Ready to scale your YouTube automation empire?</p>
+        
+        <div class="pricing-card" style="background: rgba(0,0,0,0.5); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 24px; text-align: left;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                <span style="font-weight: 700; color: #fff;">Lifetime Access</span>
+                <div style="text-align: right;">
+                    <span style="text-decoration: line-through; color: var(--text-3); font-size: 14px; margin-right: 8px;">$199</span>
+                    <span style="font-size: 24px; font-weight: 800; color: var(--blue-light);">$49</span>
+                </div>
+            </div>
+            
+            <div class="modal-features" style="background: transparent; border: none; padding: 0;">
+                <div class="feature-item" style="color: #fff;"><span style="color: var(--blue-light); margin-right: 8px;">✓</span> Unlimited Viral Generations</div>
+                <div class="feature-item" style="color: #fff;"><span style="color: var(--blue-light); margin-right: 8px;">✓</span> 100% Hands-Free Auto Posting</div>
+                <div class="feature-item" style="color: #fff;"><span style="color: var(--blue-light); margin-right: 8px;">✓</span> Alex Hormozi Animated Subtitles</div>
+                <div class="feature-item" style="color: #fff;"><span style="color: var(--blue-light); margin-right: 8px;">✓</span> Advanced Chart.js Analytics</div>
+                <div class="feature-item" style="color: #fff;"><span style="color: var(--blue-light); margin-right: 8px;">✓</span> VIP Background Processing</div>
+            </div>
         </div>
-        <button id="checkout-btn" class="btn btn-upgrade">Get Lifetime Access — $49</button>
-        <button id="close-modal" class="btn-ghost">Maybe later</button>
+
+        <button id="checkout-btn" class="btn btn-upgrade" style="width: 100%; padding: 16px; font-size: 16px; font-weight: 700; background: linear-gradient(135deg, var(--blue), #a50f15); box-shadow: 0 4px 20px var(--blue-glow); transition: all 0.2s;">Upgrade to Lifetime — $49</button>
+        <p style="font-size: 11px; color: var(--text-3); margin-top: 12px;">One-time payment. No hidden fees. Secure checkout via Stripe.</p>
+        <button id="close-modal" class="btn-ghost" style="margin-top: 12px;">Maybe later, I hate making money</button>
     </div>
 </div>
 
