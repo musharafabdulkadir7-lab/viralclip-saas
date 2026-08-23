@@ -197,6 +197,12 @@
                     <div class="table-empty">No videos posted yet. Generate your first clip!</div>
                 </div>
             </div>
+            
+            <div style="text-align: center; margin-top: 30px;">
+                <button onclick="fetch('/api/v1/analytics/reset', {method:'DELETE'}).then(()=>location.reload())" style="background:none; border:none; color:var(--text-3); font-size:11px; cursor:pointer; opacity:0.5; transition: opacity 0.2s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.5'">
+                    [Developer: Reset Analytics to 0]
+                </button>
+            </div>
         </div>
     </main>
 
