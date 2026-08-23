@@ -174,6 +174,17 @@ async def get_analytics(request: Request):
         print(f"Analytics error: {e}")
         return {"videos": [], "total_views": 0, "total_videos": 0, "avg_views": 0}
 
+@app.delete("/api/v1/analytics/reset")
+async def reset_analytics(request: Request):
+    user_id = request.cookies.get("user_id", "demo_user_123")
+    if supabase:
+        try:
+            supabase.table("clips").delete().eq("user_id", user_id).execute()
+            return {"status": "success", "message": "Analytics reset to 0"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    return {"status": "error", "message": "No database connection"}
+
 @app.get("/api/v1/auto-post/settings")
 async def get_auto_post_settings(request: Request):
     user_id = request.cookies.get("user_id", "demo_user_123")
