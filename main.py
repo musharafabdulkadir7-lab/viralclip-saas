@@ -55,14 +55,30 @@ async def auto_post_scheduler():
             current_time_str = now.strftime("%H:%M")
             print(f"[Scheduler] Checking auto-post schedules for time {current_time_str} UTC")
             
-            if supabase and redis_client:
-                # Fetch users whose auto_post is enabled and time matches current UTC time
-                res = supabase.table("users").select("id, auto_post_niche").eq("auto_post_enabled", True).eq("auto_post_time", current_time_str).execute()
-                users_to_post = res.data or []
+            if redis_client:
+                current_day = now.strftime("%a") # e.g. "Mon"
                 
-                for u in users_to_post:
-                    user_id = u["id"]
-                    niche = u.get("auto_post_niche", "motivation")
+                # Use SCAN to find all autopost settings
+                for key in redis_client.scan_iter("user:*:autopost"):
+                    user_id = key.split(":")[1]
+                    data = redis_client.hgetall(key)
+                    
+                    if data.get("enabled") != "True":
+                        continue
+                        
+                    try:
+                        days = json.loads(data.get("days", '[]'))
+                        times = json.loads(data.get("times", '[]'))
+                    except:
+                        continue
+                        
+                    if current_day not in days:
+                        continue
+                        
+                    if current_time_str not in times:
+                        continue
+                        
+                    niche = data.get("niche", "motivation")
                     
                     # Generate a job
                     job_id = str(uuid.uuid4())
@@ -102,8 +118,10 @@ class ClipRequest(BaseModel):
 
 class AutoPostSettings(BaseModel):
     enabled: bool
-    time: str
+    time: str = "12:00"
+    times: list[str] = []
     niche: str
+    days: list[str] = []
 
 # Helper functions
 def get_or_create_user(user_id: str):
@@ -159,36 +177,68 @@ async def get_analytics(request: Request):
 @app.get("/api/v1/auto-post/settings")
 async def get_auto_post_settings(request: Request):
     user_id = request.cookies.get("user_id", "demo_user_123")
-    if not supabase:
-        return {"enabled": False, "time": "12:00", "niche": "motivation"}
-    try:
-        res = supabase.table("users").select("auto_post_enabled, auto_post_time, auto_post_niche").eq("id", user_id).execute()
-        if res.data:
-            data = res.data[0]
-            return {
-                "enabled": data.get("auto_post_enabled", False),
-                "time": data.get("auto_post_time", "12:00"),
-                "niche": data.get("auto_post_niche", "motivation")
-            }
-    except Exception as e:
-        print(f"Error fetching auto-post settings: {e}")
-    return {"enabled": False, "time": "12:00", "niche": "motivation"}
+    default_settings = {"enabled": False, "time": "12:00", "times": ["12:00"], "niche": "motivation", "days": ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]}
+    
+    if redis_client:
+        try:
+            data = redis_client.hgetall(f"user:{user_id}:autopost")
+            if data:
+                return {
+                    "enabled": data.get("enabled") == "True",
+                    "time": data.get("time", "12:00"),
+                    "times": json.loads(data.get("times", '["12:00"]')),
+                    "niche": data.get("niche", "motivation"),
+                    "days": json.loads(data.get("days", '["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]'))
+                }
+        except Exception as e:
+            print(f"Redis fetch error: {e}")
+            
+    # Fallback to Supabase if Redis is empty
+    if supabase:
+        try:
+            res = supabase.table("users").select("auto_post_enabled, auto_post_time, auto_post_niche").eq("id", user_id).execute()
+            if res.data:
+                d = res.data[0]
+                default_settings.update({
+                    "enabled": d.get("auto_post_enabled", False),
+                    "time": d.get("auto_post_time", "12:00"),
+                    "times": [d.get("auto_post_time", "12:00")],
+                    "niche": d.get("auto_post_niche", "motivation")
+                })
+        except Exception as e:
+            print(f"Error fetching auto-post settings: {e}")
+            
+    return default_settings
 
 @app.post("/api/v1/auto-post/settings")
 async def save_auto_post_settings(settings: AutoPostSettings, request: Request):
     user_id = request.cookies.get("user_id", "demo_user_123")
-    if not supabase:
-        return {"status": "success"}
-    try:
-        supabase.table("users").update({
-            "auto_post_enabled": settings.enabled,
-            "auto_post_time": settings.time,
-            "auto_post_niche": settings.niche
-        }).eq("id", user_id).execute()
-        return {"status": "success"}
-    except Exception as e:
-        print(f"Error saving auto-post settings: {e}")
-        raise HTTPException(status_code=500, detail="Failed to save settings")
+    
+    times_list = settings.times if settings.times else [settings.time]
+    
+    if redis_client:
+        try:
+            redis_client.hset(f"user:{user_id}:autopost", mapping={
+                "enabled": str(settings.enabled),
+                "time": times_list[0] if times_list else "12:00",
+                "times": json.dumps(times_list),
+                "niche": settings.niche,
+                "days": json.dumps(settings.days)
+            })
+        except Exception as e:
+            print(f"Redis save error: {e}")
+            
+    if supabase:
+        try:
+            supabase.table("users").update({
+                "auto_post_enabled": settings.enabled,
+                "auto_post_time": times_list[0] if times_list else "12:00",
+                "auto_post_niche": settings.niche
+            }).eq("id", user_id).execute()
+        except Exception as e:
+            print(f"Error saving auto-post settings to DB: {e}")
+            
+    return {"status": "success"}
 
 @app.post("/api/v1/generate-clip")
 async def generate_clip(payload: ClipRequest, request: Request):
@@ -428,20 +478,20 @@ Your job is to find the SINGLE most compelling complete segment — a story, lif
 - A middle (buildup/details)  
 - A natural ending (conclusion/punchline/resolution)
 
-The segment should be 2 to 4 minutes long (120 to 240 seconds) so it can be split into 2-4 Parts of ~55 seconds each.
+The segment should ideally be 30 to 55 seconds long (1 Part). Very rarely, if a story is too compelling to cut, you can choose a 60-110 second segment (2 Parts) or 120-165s (3 Parts). 90% of the time, find a single part.
 
 Rules:
-- Pick where someone is telling a complete story or making a full point — NOT just a random 3-minute window
+- Pick where someone is telling a complete story or making a full point — NOT just a random window
 - The start should be a natural hook (a question, a surprising claim, or a story setup)
 - The end should be a natural resolution (not mid-sentence)
-- Total length must be 120-240 seconds
 
 Transcript:
 {payload.transcript}
 
 You MUST respond in EXACTLY this format, nothing else, no markdown, no bullet points:
-START: 180
-END: 360
+START: 120
+END: 170
+PARTS: 1
 CAPTION: How I Built My First Million
 REASON: This segment tells a complete rags-to-riches story with a clear arc."""
 
@@ -464,6 +514,7 @@ REASON: This segment tells a complete rags-to-riches story with a clear arc."""
 
         start_m = re.search(r"START:\s*([\d:]+)", text)
         end_m   = re.search(r"END:\s*([\d:]+)", text)
+        parts_m = re.search(r"PARTS:\s*(\d+)", text)
         caption_m = re.search(r"CAPTION:\s*(.+)", text)
 
         if not start_m or not end_m:
@@ -471,10 +522,12 @@ REASON: This segment tells a complete rags-to-riches story with a clear arc."""
 
         start = parse_ts(start_m.group(1))
         end   = parse_ts(end_m.group(1))
+        parts = int(parts_m.group(1)) if parts_m else max(1, round((end - start) / 55))
         
         return {
             "start_sec": start,
             "end_sec": end,
+            "num_parts": parts,
             "caption": caption_m.group(1).strip() if caption_m else payload.niche.title()
         }
     except Exception as e:

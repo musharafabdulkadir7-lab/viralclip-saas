@@ -116,7 +116,8 @@ def run_clip_pipeline(niche: str, user_id: str, job_id: str):
             end_sec=clip_info["end_sec"],
             caption=clip_info.get("caption", niche.upper()),
             num_parts=clip_info.get("num_parts", 2),
-            watermark=f"@{niche.replace(' ', '').capitalize()}Viral"
+            watermark=f"@{niche.replace(' ', '').capitalize()}Viral",
+            sub_path=dl.get("sub_path")
         )
 
         if not clip_paths:
@@ -125,32 +126,46 @@ def run_clip_pipeline(niche: str, user_id: str, job_id: str):
 
         update_job_status(job_id, "running", 85, "Uploading to YouTube...", user_id=user_id)
         caption = clip_info.get("caption", niche.title())
-        title = f"#Shorts {caption} (Part 1) #{niche.replace(' ', '')}"
-        desc = f"{caption} - Part 1\n\n#Shorts #{niche.replace(' ', '')} #viral"
+        num_parts = clip_info.get("num_parts", 1)
 
         # Fetch credentials from backend API (no Supabase needed on customer PC)
         creds_dict = fetch_youtube_creds(user_id)
-
         if not creds_dict:
             update_job_status(job_id, "error", 85,
                 "YouTube account not connected. Please connect your account on the website first.",
                 user_id=user_id)
             return
 
-        upload_res = youtube_uploader.upload_video_to_youtube(
-            clip_paths[0], title=title, description=desc,
-            tags=["Shorts", niche, "viral", "part1"],
-            creds_dict=creds_dict
-        )
+        all_urls = []
+        for i, clip_path in enumerate(clip_paths):
+            part_num = i + 1
+            if num_parts > 1:
+                title = f"#Shorts {caption} (Part {part_num}) #{niche.replace(' ', '')}"
+                desc = f"{caption} - Part {part_num}\n\n#Shorts #{niche.replace(' ', '')} #viral"
+                tags = ["Shorts", niche, "viral", f"part{part_num}"]
+                update_job_status(job_id, "running", 85 + (i * 5), f"Uploading Part {part_num}/{len(clip_paths)}...", user_id=user_id)
+            else:
+                title = f"#Shorts {caption} #{niche.replace(' ', '')}"
+                desc = f"{caption}\n\n#Shorts #{niche.replace(' ', '')} #viral"
+                tags = ["Shorts", niche, "viral"]
 
-        if upload_res.get("status") == "success":
+            upload_res = youtube_uploader.upload_video_to_youtube(
+                clip_path, title=title, description=desc,
+                tags=tags, creds_dict=creds_dict
+            )
+
+            if upload_res.get("status") == "success":
+                all_urls.append(upload_res.get("url", ""))
+            else:
+                update_job_status(job_id, "error", 100,
+                    f"Upload failed for Part {part_num}: {upload_res.get('error')}", user_id=user_id)
+                return
+
+        if all_urls:
             video_finder.mark_video_used(video["id"], video["title"])
-            youtube_url = upload_res.get("url", "")
-            update_job_status(job_id, "complete", 100, "Done! Video is live.",
-                youtube_url, title, niche, user_id=user_id)
-        else:
-            update_job_status(job_id, "error", 100,
-                f"Upload failed: {upload_res.get('error')}", user_id=user_id)
+            # Return the first URL to the dashboard for preview
+            update_job_status(job_id, "complete", 100, f"Done! {len(all_urls)} video(s) live.",
+                all_urls[0], title, niche, user_id=user_id)
 
     except Exception as e:
         update_job_status(job_id, "error", 0, f"Critical Pipeline Error: {str(e)}", user_id=user_id)

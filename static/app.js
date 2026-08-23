@@ -89,6 +89,8 @@ function switchTab(tab) {
 }
 
 // ─── Analytics ────────────────────────────────────────────────────────────────
+let viewsChart = null;
+
 async function loadAnalytics() {
     try {
         const res = await fetch('/api/v1/analytics');
@@ -103,8 +105,12 @@ async function loadAnalytics() {
             body.innerHTML = '<div class="table-empty">No videos posted yet. Generate your first clip!</div>';
             return;
         }
-
+        
+        // Add canvas for chart dynamically before the table
         body.innerHTML = `
+            <div style="margin-bottom: 30px; height: 250px;">
+                <canvas id="viewsChart"></canvas>
+            </div>
             <div class="table-row-header">
                 <span>Title</span><span>Views</span><span>Posted</span><span>Link</span>
             </div>
@@ -116,6 +122,71 @@ async function loadAnalytics() {
                 <div class="video-link">${v.youtube_url ? `<a href="${v.youtube_url}" target="_blank">Watch ↗</a>` : '—'}</div>
             </div>`).join('')}
         `;
+        
+        // Render Chart
+        if (viewsChart) {
+            viewsChart.destroy();
+        }
+        
+        // Prepare chart data (reverse to show chronological order)
+        const chartVideos = [...data.videos].reverse();
+        const labels = chartVideos.map(v => v.created_at ? new Date(v.created_at).toLocaleDateString() : '');
+        const views = chartVideos.map(v => v.views || 0);
+        
+        const ctx = document.getElementById('viewsChart').getContext('2d');
+        
+        // Create gradient
+        const gradient = ctx.createLinearGradient(0, 0, 0, 250);
+        gradient.addColorStop(0, 'rgba(59, 130, 246, 0.5)'); // Blue
+        gradient.addColorStop(1, 'rgba(59, 130, 246, 0.0)');
+        
+        viewsChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Views',
+                    data: views,
+                    borderColor: '#3b82f6',
+                    backgroundColor: gradient,
+                    borderWidth: 3,
+                    pointBackgroundColor: '#3b82f6',
+                    pointBorderColor: '#fff',
+                    pointBorderWidth: 2,
+                    pointRadius: 4,
+                    pointHoverRadius: 6,
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: 'rgba(17, 24, 39, 0.9)',
+                        titleColor: '#fff',
+                        bodyColor: '#cbd5e1',
+                        padding: 12,
+                        cornerRadius: 8,
+                        displayColors: false
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
+                        ticks: { color: '#64748b', maxTicksLimit: 5 }
+                    },
+                    x: {
+                        grid: { display: false, drawBorder: false },
+                        ticks: { color: '#64748b', maxTicksLimit: 7 }
+                    }
+                }
+            }
+        });
+        
     } catch (e) {
         console.error('Analytics load error:', e);
     }
@@ -132,12 +203,37 @@ function escHtml(str) {
 }
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
-function showToast(message, color = '#10b981') {
+function showToast(message, type = 'success') {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+    
     const t = document.createElement('div');
-    t.style.cssText = `position:fixed;top:20px;left:50%;transform:translateX(-50%);background:${color};color:#fff;padding:12px 24px;border-radius:10px;font-weight:600;font-size:14px;box-shadow:0 4px 20px rgba(0,0,0,0.4);z-index:9999;animation:toastIn 0.3s ease;font-family:Inter,sans-serif;`;
-    t.textContent = message;
-    document.body.appendChild(t);
-    setTimeout(() => t.remove(), 3500);
+    t.className = `toast ${type}`;
+    
+    let icon = '✅';
+    if (type === 'error') icon = '❌';
+    if (type === 'info') icon = 'ℹ️';
+    
+    t.innerHTML = `
+        <div class="toast-icon">${icon}</div>
+        <div class="toast-content">
+            <h4>${type === 'error' ? 'Error' : 'Success'}</h4>
+            <p>${message}</p>
+        </div>
+    `;
+    
+    container.appendChild(t);
+    
+    // Animate in
+    requestAnimationFrame(() => {
+        t.classList.add('show');
+    });
+    
+    // Remove after 3.5s
+    setTimeout(() => {
+        t.classList.remove('show');
+        setTimeout(() => t.remove(), 400); // Wait for transition
+    }, 3500);
 }
 
 // ─── Add Log Entry ────────────────────────────────────────────────────────────
@@ -201,10 +297,10 @@ function startStatusPolling(jobId) {
 
                 if (data.url) {
                     addMessage('Director AI', `Video is live! <a href="${data.url}" target="_blank">Watch on YouTube ↗</a>`);
-                    showToast('Video posted to YouTube!', '#10b981');
+                    showToast('Video posted to YouTube!');
                 } else if (data.status === 'error') {
                     addMessage('Director AI', `Error: ${data.message}`);
-                    showToast('Generation failed — see activity log', '#ef4444');
+                    showToast('Generation failed — see activity log', 'error');
                 }
             }
         } catch (e) {
@@ -232,7 +328,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         showToast('YouTube connected successfully!');
     } else if (urlParams.get('youtube') === 'error') {
         const detail = urlParams.get('detail') || 'Unknown error';
-        showToast('YouTube connection failed: ' + detail, '#ef4444');
+        showToast('YouTube connection failed: ' + detail, 'error');
         window.history.replaceState({}, '', window.location.pathname);
     }
 
@@ -286,7 +382,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const isConnected = localStorage.getItem('youtube_connected') === 'true';
         if (!isConnected) {
             addMessage('Director AI', 'Please connect your YouTube account first using the **Connect YouTube** button in the top right.');
-            showToast('Connect YouTube first', '#f59e0b');
+            showToast('Connect YouTube first', 'info');
             return;
         }
 
@@ -362,30 +458,63 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ─── Auto Post ────────────────────────────────────────────────────────────────
+function addTimeInput(value = '') {
+    const container = document.getElementById('times-container');
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex; align-items:center; gap:10px;';
+    row.innerHTML = `
+        <input type="time" class="time-input niche-input-lg" style="max-width:160px;" value="${value}">
+        <button type="button" onclick="this.parentElement.remove()" style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:20px;line-height:1;padding:0 4px;" title="Remove">×</button>
+    `;
+    container.appendChild(row);
+}
+
 async function loadAutoPostSettings() {
     try {
         const res = await fetch('/api/v1/auto-post/settings');
         const data = await res.json();
         
         document.getElementById('autopost-enable').checked = data.enabled || false;
-        document.getElementById('autopost-time').value = data.time || '12:00';
         document.getElementById('autopost-niche').value = data.niche || 'motivation';
+        
+        // Populate dynamic time inputs
+        const container = document.getElementById('times-container');
+        container.innerHTML = '';
+        const times = data.times && data.times.length ? data.times : (data.time ? [data.time] : ['12:00']);
+        times.forEach(t => addTimeInput(t));
+        
+        if (data.days && Array.isArray(data.days)) {
+            document.querySelectorAll('.day-cb').forEach(cb => {
+                cb.checked = data.days.includes(cb.value);
+            });
+        } else {
+            document.querySelectorAll('.day-cb').forEach(cb => cb.checked = true);
+        }
     } catch (e) {
         console.error('Failed to load auto post settings:', e);
+        addTimeInput('12:00');
     }
 }
 
 async function saveAutoPostSettings() {
     const btn = document.getElementById('btn-save-autopost');
-    const prevText = btn.textContent;
     btn.textContent = 'Saving...';
     btn.disabled = true;
+    
+    const days = Array.from(document.querySelectorAll('.day-cb'))
+                      .filter(cb => cb.checked)
+                      .map(cb => cb.value);
+                      
+    const times = Array.from(document.querySelectorAll('.time-input'))
+                       .map(i => i.value)
+                       .filter(v => v);
     
     try {
         const payload = {
             enabled: document.getElementById('autopost-enable').checked,
-            time: document.getElementById('autopost-time').value || '12:00',
-            niche: document.getElementById('autopost-niche').value || 'motivation'
+            times: times,
+            niche: document.getElementById('autopost-niche').value || 'motivation',
+            days: days
         };
         
         const res = await fetch('/api/v1/auto-post/settings', {
@@ -397,11 +526,12 @@ async function saveAutoPostSettings() {
         if (res.ok) {
             showToast('Auto Post Schedule Saved!');
         } else {
-            showToast('Failed to save settings', '#ef4444');
+            showToast('Failed to save settings', 'error');
         }
+
     } catch (e) {
         console.error('Error saving:', e);
-        showToast('Error saving settings', '#ef4444');
+        showToast('Error saving settings', 'error');
     } finally {
         btn.textContent = prevText;
         btn.disabled = false;

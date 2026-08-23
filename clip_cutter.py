@@ -39,6 +39,73 @@ FFMPEG = _get_ffmpeg()
 WATERMARK_TEXT = "@FinanceClips"
 
 
+import re
+
+def parse_time(ts_str):
+    parts = ts_str.strip().split(':')
+    if len(parts) == 3:
+        h, m, s = parts
+    else:
+        h = '00'
+        m, s = parts
+    sec, ms = s.split('.') if '.' in s else (s, '000')
+    return int(h) * 3600 + int(m) * 60 + int(sec) + int(ms) / 1000.0
+
+def format_ass_time(sec):
+    if sec < 0: sec = 0
+    h = int(sec // 3600)
+    m = int((sec % 3600) // 60)
+    s = sec % 60
+    return f"{h}:{m:02d}:{s:05.2f}"
+
+def generate_ass_subtitle(vtt_path: str, start_sec: int, duration: int, output_ass: str):
+    try:
+        with open(vtt_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+    except Exception as e:
+        print(f"Error reading VTT: {e}")
+        return False
+        
+    ass_header = '''[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Hormozi,Arial,85,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,3,2,10,10,750,1
+Style: HormoziWhite,Arial,85,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,3,2,10,10,750,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+'''
+    events = []
+    blocks = re.findall(r'(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}\.\d{3})\n((?:.|\n)*?)(?=\n\n|\Z)', content)
+    end_sec = start_sec + duration
+    use_yellow = True
+    
+    for start_ts, end_ts, text in blocks:
+        t_start = parse_time(start_ts)
+        t_end = parse_time(end_ts)
+        if t_end < start_sec or t_start > end_sec:
+            continue
+        t_start -= start_sec
+        t_end -= start_sec
+        text = text.strip().replace('\n', ' ')
+        if not text:
+            continue
+        style = "Hormozi" if use_yellow else "HormoziWhite"
+        use_yellow = not use_yellow
+        events.append(f"Dialogue: 0,{format_ass_time(t_start)},{format_ass_time(t_end)},{style},,0,0,0,,{text}")
+
+    if not events: return False
+    try:
+        with open(output_ass, 'w', encoding='utf-8') as f:
+            f.write(ass_header + '\n'.join(events))
+        return True
+    except:
+        return False
+
 def cut_and_format_clip(
     video_path: str,
     start_sec: int,
@@ -46,6 +113,7 @@ def cut_and_format_clip(
     caption: str,
     output_filename: str = None,
     watermark: str = None,
+    sub_path: str = None,
 ) -> str:
     """
     Cuts a clip, crops to 9:16, applies speed+color transformation,
@@ -72,6 +140,15 @@ def cut_and_format_clip(
 
     safe_caption = esc(caption)
     safe_watermark = esc(watermark or WATERMARK_TEXT)
+    
+    # Process ASS Subtitles
+    ass_filter = ""
+    if sub_path and os.path.exists(sub_path):
+        ass_path = os.path.join(OUTPUT_DIR, f"subs_{int(time.time())}.ass")
+        if generate_ass_subtitle(sub_path, start_sec, duration, ass_path):
+            # Escape path for ffmpeg filter
+            safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+            ass_filter = f",subtitles={safe_ass}"
 
     # ─── Video Filter Chain ──────────────────────────────────────────────
     # setpts=PTS/1.05   → 1.05x speed (changes video timing/fingerprint)
@@ -81,6 +158,7 @@ def cut_and_format_clip(
     # unsharp=...       → adds a subtle crispness/quality improvement
     # drawtext #1       → main caption at bottom center
     # drawtext #2       → small watermark in top-left corner
+    # subtitles         → Optional: Hormozi style subtitles
     vf_filter = (
         "setpts=PTS/1.05,"
         "crop=ih*9/16:ih,"
@@ -108,9 +186,11 @@ def cut_and_format_clip(
         "y=50:"
         "font=Arial:"
         "fix_bounds=1"
+        f"{ass_filter}"
     )
 
     # ─── Audio Filter ─────────────────────────────────────────────────────
+
     # atempo=1.05 → 1.05x audio speed (shifts audio fingerprint to avoid Content ID)
     af_filter = "atempo=1.05"
 
@@ -155,6 +235,7 @@ def cut_multipart_clips(
     caption: str,
     num_parts: int,
     watermark: str = None,
+    sub_path: str = None,
 ) -> list[str]:
     """
     Cuts a longer segment into multiple parts (Part 1, Part 2, etc.)
@@ -172,7 +253,10 @@ def cut_multipart_clips(
         if part_end - part_start > 56:
             part_end = part_start + 56
 
-        part_caption = f"{caption} (Part {i+1})"
+        if num_parts > 1:
+            part_caption = f"{caption} (Part {i+1})"
+        else:
+            part_caption = caption
         
         print(f"\n[ClipCutter] --- Generating Part {i+1}/{num_parts} ---")
         path = cut_and_format_clip(
@@ -180,7 +264,9 @@ def cut_multipart_clips(
             start_sec=part_start,
             end_sec=part_end,
             caption=part_caption,
-            watermark=watermark
+            output_filename=f"clip_{int(time.time())}_part{i+1}.mp4",
+            watermark=watermark,
+            sub_path=sub_path,
         )
         if path:
             clip_paths.append(path)

@@ -11,10 +11,12 @@ from urllib.parse import urlparse, parse_qs
 try:
     import pystray
     from PIL import Image, ImageDraw
+    import winreg as reg
 except ImportError:
     subprocess.run([sys.executable, "-m", "pip", "install", "pystray", "Pillow"], check=True)
     import pystray
     from PIL import Image, ImageDraw
+    import winreg as reg
 
 # Setup cross-platform paths
 HOME_DIR = Path.home() / ".clipai"
@@ -33,7 +35,9 @@ os.environ["API_BASE_URL"] = API_BASE_URL
 # os.environ["API_BASE_URL"] = API_BASE_URL
 
 def get_user_id():
-    # If passed as arg via URI handler
+    local_storage_path = Path.home() / ".clipai" / "user_id.txt"
+    
+    # 1. If passed as arg via URI handler from the website (e.g. clipai://start?user_id=user_12345)
     if len(sys.argv) > 1:
         for arg in sys.argv[1:]:
             if arg.startswith("clipai://"):
@@ -41,27 +45,28 @@ def get_user_id():
                 parsed = urlparse(arg)
                 qs = parse_qs(parsed.query)
                 if "user_id" in qs:
-                    return qs["user_id"][0]
+                    uid = qs["user_id"][0]
+                    # Save it so future manual double-clicks work
+                    local_storage_path.parent.mkdir(parents=True, exist_ok=True)
+                    local_storage_path.write_text(uid)
+                    return uid
 
-    # Check local storage file
-    local_storage_path = Path.home() / ".clipai" / "user_id.txt"
+    # 2. Check local storage file
     if local_storage_path.exists():
         stored_id = local_storage_path.read_text().strip()
-        if stored_id:
+        if stored_id and "@" not in stored_id: # Ignore old broken emails
             return stored_id
 
-    # Prompt user in terminal
-    print("\n" + "="*50)
+    # 3. If no ID found, force them to use the website
+    print("\n" + "="*60)
     print("Welcome to ClipAI Desktop Worker!")
-    print("="*50)
-    email = input("Please enter the email address you use on the website: ").strip()
-    if email:
-        local_storage_path.parent.mkdir(parents=True, exist_ok=True)
-        local_storage_path.write_text(email)
-        print(f"Saved! You won't have to enter this again. (Stored in {local_storage_path})")
-        return email
-        
-    return "demo_user_123"
+    print("="*60)
+    print("ERROR: No linked account found.")
+    print("Please go to your web dashboard and click 'Start Worker'.")
+    print("This will securely link your browser session to this app.")
+    print("="*60)
+    time.sleep(10)
+    os._exit(1)
 
 USER_ID = get_user_id()
 is_running = True
@@ -151,14 +156,52 @@ def run_worker_loop():
             print(f"Unexpected polling error: {e}")
         time.sleep(3)
 
+def set_autostart(enable=True):
+    key = reg.HKEY_CURRENT_USER
+    key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+    try:
+        registry_key = reg.OpenKey(key, key_path, 0, reg.KEY_ALL_ACCESS)
+        if enable:
+            # We add quotes around sys.executable to ensure paths with spaces work safely
+            cmd = f'"{sys.executable}"'
+            reg.SetValueEx(registry_key, "ClipAI_Worker", 0, reg.REG_SZ, cmd)
+        else:
+            try:
+                reg.DeleteValue(registry_key, "ClipAI_Worker")
+            except FileNotFoundError:
+                pass
+        reg.CloseKey(registry_key)
+    except Exception as e:
+        print(f"Failed to set startup: {e}")
+
+def check_autostart():
+    key = reg.HKEY_CURRENT_USER
+    key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+    try:
+        registry_key = reg.OpenKey(key, key_path, 0, reg.KEY_READ)
+        value, _ = reg.QueryValueEx(registry_key, "ClipAI_Worker")
+        reg.CloseKey(registry_key)
+        return True
+    except FileNotFoundError:
+        return False
+
 def create_image():
-    # Generate a simple blue icon for the system tray
-    image = Image.new('RGB', (64, 64), color=(59, 130, 246))
+    # Generate a sleek crimson icon for the system tray
+    image = Image.new('RGB', (64, 64), color=(220, 38, 38))
     d = ImageDraw.Draw(image)
     d.rectangle([16, 16, 48, 48], fill="white")
     return image
 
 def setup_tray():
+    autostart_enabled = check_autostart()
+
+    def toggle_autostart(icon, item):
+        nonlocal autostart_enabled
+        autostart_enabled = not autostart_enabled
+        set_autostart(autostart_enabled)
+        # Update menu
+        icon.update_menu()
+
     def quit_action(icon, item):
         global is_running
         is_running = False
@@ -167,6 +210,7 @@ def setup_tray():
         
     menu = pystray.Menu(
         pystray.MenuItem("Worker Active (🟢)", lambda: None, enabled=False),
+        pystray.MenuItem("Run on Startup", toggle_autostart, checked=lambda item: autostart_enabled),
         pystray.MenuItem("Quit", quit_action)
     )
     icon = pystray.Icon("ClipAI", create_image(), "ClipAI Worker", menu)
@@ -194,5 +238,10 @@ if __name__ == "__main__":
     worker_thread = threading.Thread(target=run_worker_loop, daemon=True)
     worker_thread.start()
     
-    # Run system tray
-    setup_tray()
+    if "--cli" in sys.argv:
+        print("Running in CLI mode. Press Ctrl+C to exit.")
+        while True:
+            time.sleep(1)
+    else:
+        # Run system tray
+        setup_tray()

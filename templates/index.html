@@ -202,7 +202,7 @@
                 <div class="setting-row">
                     <div class="setting-info">
                         <h3 style="color:var(--text);font-size:18px;margin-bottom:6px;">Enable Auto Post</h3>
-                        <p style="color:var(--text-2);font-size:14px;">The Desktop Worker must be running at the scheduled time.</p>
+                        <p style="color:var(--text-2);font-size:14px;">The Desktop Worker must be running in the background. (Right-click the ClipAI icon in your System Tray and select "Run on Startup"!) </p>
                     </div>
                     <label class="toggle-switch">
                         <input type="checkbox" id="autopost-enable">
@@ -214,14 +214,30 @@
 
                 <div class="setting-group" style="display:flex; flex-direction:column; gap:20px;">
                     <div>
-                        <label class="input-label">Posting Time (UTC)</label>
-                        <input type="time" id="autopost-time" class="niche-input-lg" style="max-width: 200px;">
-                        <p style="color:var(--text-3);font-size:12px;margin-top:8px;">Format: HH:MM. Ensure your desktop worker is online at this time.</p>
+                        <label class="input-label">Posting Times (UTC)</label>
+                        <div id="times-container" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px;">
+                            <!-- Time inputs will be added here dynamically -->
+                        </div>
+                        <button type="button" class="btn btn-outline btn-sm" onclick="addTimeInput()" style="padding: 6px 12px; font-size: 13px;">+ Add Time</button>
+                        <p style="color:var(--text-3);font-size:12px;margin-top:8px;">Format: HH:MM. Add as many times as you want.</p>
                     </div>
                     
                     <div>
                         <label class="input-label">Target Niche or Creator</label>
                         <input type="text" id="autopost-niche" class="niche-input-lg" placeholder="e.g. Finance, Tech, MrBeast">
+                    </div>
+
+                    <div>
+                        <label class="input-label">Posting Days</label>
+                        <div class="days-selector" style="display: flex; gap: 10px; margin-top: 10px;">
+                            <label><input type="checkbox" value="Mon" checked class="day-cb"> Mon</label>
+                            <label><input type="checkbox" value="Tue" checked class="day-cb"> Tue</label>
+                            <label><input type="checkbox" value="Wed" checked class="day-cb"> Wed</label>
+                            <label><input type="checkbox" value="Thu" checked class="day-cb"> Thu</label>
+                            <label><input type="checkbox" value="Fri" checked class="day-cb"> Fri</label>
+                            <label><input type="checkbox" value="Sat" checked class="day-cb"> Sat</label>
+                            <label><input type="checkbox" value="Sun" checked class="day-cb"> Sun</label>
+                        </div>
                     </div>
                 </div>
 
@@ -282,6 +298,8 @@
     </div>
 </div>
 
+<div id="toast-container"></div>
+
 <script>
 function startWorkerURI() {
     const userId = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1] || 'demo_user_123';
@@ -295,6 +313,7 @@ function showDownloadTip() {
     }, 10000);
 }
 </script>
-<script src="/static/app.js?v=11"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="/static/app.js?v=12"></script>
 </body>
 </html>
