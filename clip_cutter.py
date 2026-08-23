@@ -159,6 +159,8 @@ def cut_and_format_clip(
         "[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=40:20,eq=brightness=-0.15:saturation=1.1[bg_blurred]; "
         # Scale foreground video to fit inside 1080x1920 without cropping
         "[fg]scale=1080:1920:force_original_aspect_ratio=decrease[fg_scaled]; "
+        # Overlay foreground over blurred background
+        "[bg_blurred][fg_scaled]overlay=(W-w)/2:(H-h)/2[merged]; "
         # Changed caption y=h-text_h-350 to avoid YouTube Shorts title area, watermark y=80 to sit cleanly in top-left YouTube Shorts safe zone
         "[merged]eq=contrast=1.03:brightness=0.01:saturation=1.06,unsharp=5:5:1.0:5:5:0.0,"
         f"drawtext=text='{safe_caption}':fontsize=38:fontcolor=white:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-text_h-350:font=Arial Bold:box=1:boxcolor=black@0.60:boxborderw=16:fix_bounds=1,"
