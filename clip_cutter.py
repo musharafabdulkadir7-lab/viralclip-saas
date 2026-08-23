@@ -100,6 +100,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     if not events: return False
     try:
+        # Changed font to Impact for bolder, higher quality Hormozi look, increased size to 115
+        ass_header = ass_header.replace("Arial,85", "Impact,115")
         with open(output_ass, 'w', encoding='utf-8') as f:
             f.write(ass_header + '\n'.join(events))
         return True
@@ -116,8 +118,8 @@ def cut_and_format_clip(
     sub_path: str = None,
 ) -> str:
     """
-    Cuts a clip, crops to 9:16, applies speed+color transformation,
-    burns a caption and watermark. Returns the output path.
+    Cuts a clip, formats it to 9:16 using a cinematic blurred background,
+    applies speed+color transformation, and burns a caption, watermark, and subtitles.
     """
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -150,43 +152,20 @@ def cut_and_format_clip(
             safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
             ass_filter = f",subtitles={safe_ass}"
 
-    # ─── Video Filter Chain ──────────────────────────────────────────────
-    # setpts=PTS/1.05   → 1.05x speed (changes video timing/fingerprint)
-    # crop=ih*9/16:ih   → center crop to 9:16
-    # scale=1080:1920   → upscale to Shorts resolution
-    # eq=...            → color grade: toned down to look natural but slightly tweaked
-    # unsharp=...       → adds a subtle crispness/quality improvement
-    # drawtext #1       → main caption at bottom center
-    # drawtext #2       → small watermark in top-left corner
-    # subtitles         → Optional: Hormozi style subtitles
-    vf_filter = (
-        "setpts=PTS/1.05,"
-        "crop=ih*9/16:ih,"
-        "scale=1080:1920,"
-        "eq=contrast=1.03:brightness=0.01:saturation=1.06,"
-        "unsharp=5:5:1.0:5:5:0.0,"
-        f"drawtext=text='{safe_caption}':"
-        "fontsize=36:"
-        "fontcolor=white:"
-        "borderw=2:"
-        "bordercolor=black:"
-        "x=(w-text_w)/2:"
-        "y=h-text_h-180:"
-        "font=Arial Bold:"
-        "box=1:"
-        "boxcolor=black@0.60:"
-        "boxborderw=16:"
-        "fix_bounds=1,"
-        f"drawtext=text='{safe_watermark}':"
-        "fontsize=26:"
-        "fontcolor=white@0.75:"
-        "borderw=1:"
-        "bordercolor=black@0.5:"
-        "x=24:"
-        "y=50:"
-        "font=Arial:"
-        "fix_bounds=1"
-        f"{ass_filter}"
+    # ─── Filter Complex (Cinematic Blur Background) ──────────────────────
+    filter_complex = (
+        "[0:v]setpts=PTS/1.05,split=2[bg][fg]; "
+        # Create blurred background: scale to cover 1080x1920, crop exact size, heavy boxblur, darken slightly
+        "[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=40:20,eq=brightness=-0.15:saturation=1.1[bg_blurred]; "
+        # Scale foreground video to fit inside 1080x1920 without cropping
+        "[fg]scale=1080:1920:force_original_aspect_ratio=decrease[fg_scaled]; "
+        # Overlay foreground over blurred background
+        "[bg_blurred][fg_scaled]overlay=(W-w)/2:(H-h)/2[merged]; "
+        # Apply final color grade, unsharp, and texts onto merged result
+        "[merged]eq=contrast=1.03:brightness=0.01:saturation=1.06,unsharp=5:5:1.0:5:5:0.0,"
+        f"drawtext=text='{safe_caption}':fontsize=36:fontcolor=white:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-text_h-180:font=Arial Bold:box=1:boxcolor=black@0.60:boxborderw=16:fix_bounds=1,"
+        f"drawtext=text='{safe_watermark}':fontsize=26:fontcolor=white@0.75:borderw=1:bordercolor=black@0.5:x=24:y=50:font=Arial:fix_bounds=1"
+        f"{ass_filter}[v_out]"
     )
 
     # ─── Audio Filter ─────────────────────────────────────────────────────
@@ -198,9 +177,11 @@ def cut_and_format_clip(
         FFMPEG,
         "-y",
         "-ss", str(start_sec),
-        "-i", video_path,
         "-t", str(duration),
-        "-vf", vf_filter,
+        "-i", video_path,
+        "-filter_complex", filter_complex,
+        "-map", "[v_out]",
+        "-map", "0:a",
         "-af", af_filter,
         "-c:v", "libx264",
         "-preset", "medium",  # Better compression quality than 'fast'
