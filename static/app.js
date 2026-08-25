@@ -452,6 +452,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 localStorage.setItem('active_job_id', data.job_id);
                 addMessage('Director AI', `Pipeline started for **${niche}**. Watch the progress bar!`);
                 startStatusPolling(data.job_id);
+                // Live-update the free generations badge
+                if (data.free_remaining !== null && data.free_remaining !== undefined) {
+                    const badge = document.getElementById('free-tier-badge');
+                    const span = document.getElementById('free-remaining');
+                    if (span) span.textContent = data.free_remaining;
+                    if (badge && data.free_remaining === 0) {
+                        badge.style.color = '#ef4444';
+                        badge.innerHTML = '🔒 Free Tier — <span id="free-remaining">0</span> generations remaining';
+                    }
+                }
             } else {
                 runBtn.disabled = false;
                 runBtn.innerHTML = `

@@ -126,17 +126,17 @@ class AutoPostSettings(BaseModel):
 # Helper functions
 def get_or_create_user(user_id: str):
     if not supabase:
-        return {"id": user_id, "free_clip_used": False, "license": "free_tier"}
+        return {"id": user_id, "free_clips_used": 0, "license": "free_tier"}
     try:
         res = supabase.table("users").select("*").eq("id", user_id).execute()
         if res.data:
             return res.data[0]
-        new_user = {"id": user_id, "free_clip_used": False, "license": "free_tier"}
+        new_user = {"id": user_id, "free_clips_used": 0, "license": "free_tier"}
         supabase.table("users").insert(new_user).execute()
         return new_user
     except Exception as e:
         print(f"DB error for user {user_id}: {e}")
-        return {"id": user_id, "free_clip_used": False, "license": "free_tier"}
+        return {"id": user_id, "free_clips_used": 0, "license": "free_tier"}
 
 @app.get("/")
 async def render_index(request: Request):
@@ -257,9 +257,11 @@ async def generate_clip(payload: ClipRequest, request: Request):
     user_id = request.cookies.get("user_id", "demo_user_123")
     user = get_or_create_user(user_id)
 
-    # Enforce paywall on free tier
-    if user.get("free_clip_used") and user.get("license") == "free_tier":
-        raise HTTPException(status_code=402, detail="Free trial clip used. Upgrade required.")
+    # Enforce paywall on free tier — allow up to 5 free generations
+    free_clips_used = user.get("free_clips_used", 0)
+    FREE_TIER_LIMIT = 5
+    if free_clips_used >= FREE_TIER_LIMIT and user.get("license") == "free_tier":
+        raise HTTPException(status_code=402, detail="Free tier limit reached (5/5). Upgrade required.")
 
     # Create job ID and store status in Redis
     import threading
@@ -273,12 +275,14 @@ async def generate_clip(payload: ClipRequest, request: Request):
         })
         redis_client.expire(f"job:{job_id}", 86400)
 
-    # Mark free clip as used if on free tier (non-blocking)
+    # Increment free clip counter if on free tier (non-blocking)
     if supabase and user.get("license") == "free_tier":
         try:
-            supabase.table("users").update({"free_clip_used": True}).eq("id", user_id).execute()
+            supabase.table("users").update({
+                "free_clips_used": free_clips_used + 1
+            }).eq("id", user_id).execute()
         except Exception as e:
-            print(f"Warning: Could not update free_clip_used: {e}")
+            print(f"Warning: Could not update free_clips_used: {e}")
 
     # Queue the job for the client worker
     if redis_client:
@@ -292,7 +296,9 @@ async def generate_clip(payload: ClipRequest, request: Request):
     else:
         print("[Queue] WARNING: redis_client is None — job not queued!")
 
-    return {"status": "success", "job_id": job_id}
+    # Return remaining free generations so UI can update the badge
+    remaining = max(0, FREE_TIER_LIMIT - (free_clips_used + 1)) if user.get("license") == "free_tier" else None
+    return {"status": "success", "job_id": job_id, "free_remaining": remaining}
 
 @app.get("/api/v1/job-status/{job_id}")
 async def get_job_status(job_id: str):
