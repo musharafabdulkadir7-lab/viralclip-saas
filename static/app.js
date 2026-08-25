@@ -483,6 +483,27 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+// ─── Cancel Job ───────────────────────────────────────────────────────────────
+function cancelJob() {
+    // Clear the stored job so the UI stops polling
+    localStorage.removeItem('active_job_id');
+    // Hide the progress card
+    document.getElementById('progress-container').classList.add('hidden');
+    // Re-enable the generate button
+    const runBtn = document.getElementById('run-clip-farm-btn');
+    if (runBtn) {
+        runBtn.disabled = false;
+        runBtn.innerHTML = `
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M3 2.5L13.5 8L3 13.5V2.5Z" fill="currentColor"/>
+            </svg>
+            Find &amp; Post Clip Now
+        `;
+    }
+    resetPipelineSteps();
+    addMessage('Director AI', 'Job cancelled. Ready to generate a new clip!');
+}
+
     // Paywall modal buttons
     document.getElementById('checkout-btn').addEventListener('click', async () => {
         const res = await fetch('/api/v1/create-checkout-session', { method: 'POST' });
