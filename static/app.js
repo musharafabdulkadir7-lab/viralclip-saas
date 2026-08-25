@@ -88,6 +88,33 @@ function switchTab(tab) {
     if (tab === 'autopost') loadAutoPostSettings();
 }
 
+// ─── Dynamic Ticker ───────────────────────────────────────────────────────────
+function initTicker() {
+    const ticker = document.getElementById('dynamic-ticker');
+    if (!ticker) return;
+    
+    const names = ['mike_h', 'viral_king', 'sarah_j', 'anon', 'user183', 'crypto_god', 'hustler99', 'clip_master', 'tt_creator', 'passive_inc'];
+    const actions = ['generated a', 'auto-posted a', 'hit 50k views on a', 'hit 1M views on a', 'rendered a', 'scheduled a'];
+    const niches = ['Crypto', 'Motivation', 'MrBeast', 'Finance', 'Tech', 'Podcast', 'Gaming', 'Fitness'];
+    const colors = ['var(--blue-light)', 'var(--green)'];
+    
+    let html = '';
+    // Generate 30 random items
+    for (let i = 0; i < 30; i++) {
+        const time = Math.floor(Math.random() * 59) + 1;
+        const name = names[Math.floor(Math.random() * names.length)];
+        const action = actions[Math.floor(Math.random() * actions.length)];
+        const niche = niches[Math.floor(Math.random() * niches.length)];
+        const color = colors[Math.floor(Math.random() * colors.length)];
+        
+        let timeStr = i === 0 ? 'Just now' : `${time}m ago`;
+        html += `<span style="color: ${color};">● ${timeStr}:</span> <strong>${name}</strong> ${action} ${niche} clip &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`;
+    }
+    // Duplicate the content so the infinite scroll is seamless
+    ticker.innerHTML = html + html;
+}
+document.addEventListener('DOMContentLoaded', initTicker);
+
 // ─── Analytics ────────────────────────────────────────────────────────────────
 let viewsChart = null;
 
