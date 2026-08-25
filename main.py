@@ -285,7 +285,8 @@ async def generate_clip(payload: ClipRequest, request: Request):
         redis_client.lpush(f"worker_queue:{user_id}", json.dumps({
             "job_id": job_id,
             "niche": payload.niche,
-            "user_id": user_id
+            "user_id": user_id,
+            "is_free_tier": user.get("license") == "free_tier"
         }))
         print(f"[Queue] Job {job_id} pushed to worker_queue:{user_id}")
     else:
