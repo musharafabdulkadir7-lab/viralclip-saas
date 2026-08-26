@@ -185,6 +185,11 @@ async def reset_analytics(request: Request):
             raise HTTPException(status_code=500, detail=str(e))
     return {"status": "error", "message": "No database connection"}
 
+@app.get("/api/v1/worker/version")
+async def get_worker_version():
+    """Returns the latest worker version so the client can auto-update."""
+    return {"version": "1.3.0"}
+
 @app.get("/api/v1/auto-post/settings")
 async def get_auto_post_settings(request: Request):
     user_id = request.cookies.get("user_id", "demo_user_123")

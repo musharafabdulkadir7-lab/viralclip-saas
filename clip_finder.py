@@ -135,21 +135,33 @@ def find_best_segment(sub_path: str, niche: str = "motivation") -> dict:
             start = data.get("start_sec", 60)
             end = data.get("end_sec", 240)
             caption = data.get("caption", niche.title())
+            num_parts = data.get("num_parts", 1)
             
-            duration = end - start
-            if duration < 100:
-                end = start + 165
-            if duration > 250:
-                end = start + 220
+            # Snap to closest VTT boundaries so we don't cut mid-sentence
+            snapped_start = start
+            snapped_end = end
+            
+            # Find the entry closest to the requested start time
+            valid_starts = [int(e["start"]) for e in entries]
+            if valid_starts:
+                snapped_start = min(valid_starts, key=lambda x: abs(x - start))
+            
+            # Find the entry closest to the requested end time (using e["end"])
+            valid_ends = [int(e["end"]) for e in entries]
+            if valid_ends:
+                snapped_end = min(valid_ends, key=lambda x: abs(x - end))
                 
-            duration = end - start
-            num_parts = max(2, min(4, round(duration / 55)))
+            # Fallback sanity check
+            if snapped_end <= snapped_start:
+                snapped_end = snapped_start + 55
+                
+            duration = snapped_end - snapped_start
             
-            print(f"[ClipFinder] Segment: {start}s-{end}s ({duration}s) -> {num_parts} parts | '{caption}'")
-            return {"start_sec": start, "end_sec": end, "caption": caption, "num_parts": num_parts}
+            print(f"[ClipFinder] Gemini Segment: {start}s-{end}s | Snapped to Sentence Boundaries: {snapped_start}s-{snapped_end}s ({duration}s) -> {num_parts} parts")
+            return {"start_sec": snapped_start, "end_sec": snapped_end, "caption": caption, "num_parts": num_parts}
         else:
             print(f"[ClipFinder] Backend returned {res.status_code}")
-            return {"start_sec": 60, "end_sec": 240, "caption": niche.title(), "num_parts": 3}
+            return {"start_sec": 60, "end_sec": 115, "caption": niche.title(), "num_parts": 1}
             
     except Exception as e:
         print(f"[ClipFinder] Request to backend failed: {e}")
