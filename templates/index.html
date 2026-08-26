@@ -7,7 +7,7 @@
     <meta name="description" content="AI-powered tool that finds viral videos, cuts the best clip, and posts it to your YouTube channel automatically.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=11">
+    <link rel="stylesheet" href="/static/style.css?v=20">
 </head>
 <body>
 <div class="app-layout">
@@ -81,51 +81,9 @@
 
     <div class="content-area">
 
-<div class="app">
-
-    <!-- ── Background Glow Effects ────────────────── -->
-    <div class="bg-glow bg-glow-1"></div>
-    <div class="bg-glow bg-glow-2"></div>
-
-    <!-- ── Top Navigation ───────────────────────────── -->
-    <header class="topbar">
-        <div class="topbar-left">
-            <a href="/" class="logo">
-                <div class="logo-icon">
-                    <svg width="17" height="17" viewBox="0 0 17 17" fill="none">
-                        <path d="M4 3.5L14.5 8.5L4 13.5V3.5Z" fill="white"/>
-                    </svg>
-                </div>
-                <span class="logo-text">ClipAI</span>
-            </a>
-            <nav class="top-nav">
-                <button class="nav-tab active" id="tab-generate"   onclick="switchTab('generate')">Generate</button>
-                <button class="nav-tab"        id="tab-autopost"   onclick="switchTab('autopost')">Auto Post</button>
-                <button class="nav-tab"        id="tab-analytics"  onclick="switchTab('analytics')">Analytics</button>
-            </nav>
-        </div>
-        <div class="topbar-right">
-            <!-- Worker Status -->
-            <div class="yt-status-badge" id="worker-status-badge" style="cursor:pointer" onclick="document.getElementById('worker-modal').classList.remove('hidden')">
-                <span class="status-dot" id="worker-dot"></span>
-                <span id="worker-label">Worker Offline</span>
-            </div>
-            <!-- YouTube Status -->
-            <div class="yt-status-badge" id="yt-status-badge">
-                <span class="status-dot" id="yt-dot"></span>
-                <span id="yt-label">Not Connected</span>
-            </div>
-            <!-- Connect Button -->
-            <a href="/api/v1/auth/youtube" id="connect-youtube-btn" class="btn btn-connect">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.6 3.6 12 3.6 12 3.6s-7.6 0-9.4.5A3 3 0 0 0 .5 6.2 31.5 31.5 0 0 0 0 12a31.5 31.5 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.8.5 9.4.5 9.4.5s7.6 0 9.4-.5a3 3 0 0 0 2.1-2.1A31.5 31.5 0 0 0 24 12a31.5 31.5 0 0 0-.5-5.8zM9.8 15.6V8.4l6.3 3.6-6.3 3.6z"/>
-                </svg>
-                Connect YouTube
-            </a>
-        </div>
-    </header>
 
     <!-- ── Generate Tab ──────────────────────────────── -->
+
     <main class="tab-content" id="tab-content-generate">
         <div class="generate-layout">
 
