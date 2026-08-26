@@ -194,12 +194,14 @@
                 </div>
             </div>
 
-            <!-- Videos Table -->
-            <div class="glass-card videos-table-card">
-                <div class="table-header">Recent Uploads</div>
-                <div id="videos-table-body">
-                    <div class="table-empty">No videos posted yet. Generate your first clip!</div>
-                </div>
+            <!-- Videos Gallery Grid -->
+            <div class="gallery-header" style="margin-top:40px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:flex-end;">
+                <h3 style="color:white; font-size:24px; font-weight:600; margin:0;">My Clips</h3>
+                <span style="color:var(--text-3); font-size:14px;">Your generated library</span>
+            </div>
+            
+            <div id="videos-gallery-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 24px; margin-bottom: 40px;">
+                <div class="table-empty" style="grid-column: 1 / -1;">No videos posted yet. Generate your first clip!</div>
             </div>
             
             <div style="text-align: center; margin-top: 30px;">

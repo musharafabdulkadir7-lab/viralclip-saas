@@ -133,28 +133,46 @@ async function loadAnalytics() {
         document.getElementById('stat-total-videos').textContent = data.total_videos;
         document.getElementById('stat-avg-views').textContent = formatNumber(data.avg_views);
 
-        const body = document.getElementById('videos-table-body');
+        const galleryGrid = document.getElementById('videos-gallery-grid');
+        if (!galleryGrid) return;
+
         if (!data.videos || data.videos.length === 0) {
-            body.innerHTML = '<div class="table-empty">No videos posted yet. Generate your first clip!</div>';
+            galleryGrid.innerHTML = '<div class="table-empty" style="grid-column: 1 / -1;">No videos posted yet. Generate your first clip!</div>';
             return;
         }
         
-        // Add canvas for chart dynamically before the table
-        body.innerHTML = `
-            <div style="margin-bottom: 30px; height: 250px;">
-                <canvas id="viewsChart"></canvas>
-            </div>
-            <div class="table-row-header">
-                <span>Title</span><span>Views</span><span>Posted</span><span>Link</span>
-            </div>
-            ${data.videos.map(v => `
-            <div class="table-row">
-                <div class="video-title">${escHtml(v.title || v.niche || 'Untitled')}</div>
-                <div class="video-views">${formatNumber(v.views || 0)}</div>
-                <div class="video-date">${v.created_at ? new Date(v.created_at).toLocaleDateString() : '—'}</div>
-                <div class="video-link">${v.youtube_url ? `<a href="${v.youtube_url}" target="_blank">Watch ↗</a>` : '—'}</div>
-            </div>`).join('')}
-        `;
+        // Add canvas for chart dynamically
+        
+        // Render Chart container
+        const chartContainer = document.createElement('div');
+        chartContainer.style.marginBottom = '40px';
+        chartContainer.style.height = '250px';
+        chartContainer.style.width = '100%';
+        chartContainer.innerHTML = '<canvas id="viewsChart"></canvas>';
+        
+        // Insert chart right before the gallery header
+        const galleryHeader = document.querySelector('.gallery-header');
+        galleryHeader.parentNode.insertBefore(chartContainer, galleryHeader);
+        
+        // Render video cards
+        galleryGrid.innerHTML = data.videos.map(v => {
+            const videoId = v.youtube_url ? v.youtube_url.split('shorts/')[1] || v.youtube_url.split('v=')[1] : null;
+            const thumbUrl = videoId ? `https://i.ytimg.com/vi/${videoId.split('?')[0]}/maxresdefault.jpg` : 'https://via.placeholder.com/400x700/1e293b/3b82f6?text=ClipAI';
+            
+            return `
+            <div style="background:var(--bg-2); border:1px solid var(--border); border-radius:12px; overflow:hidden; transition:transform 0.2s, box-shadow 0.2s;" onmouseover="this.style.transform='translateY(-4px)'; this.style.boxShadow='0 12px 24px rgba(0,0,0,0.3)';" onmouseout="this.style.transform='none'; this.style.boxShadow='none';">
+                <div style="width:100%; aspect-ratio:9/16; background:var(--bg-1); background-image:url('${thumbUrl}'); background-size:cover; background-position:center; position:relative;">
+                    ${v.youtube_url ? `<a href="${v.youtube_url}" target="_blank" style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0); transition:background 0.2s;" onmouseover="this.style.background='rgba(0,0,0,0.4)'; this.children[0].style.opacity='1'" onmouseout="this.style.background='rgba(0,0,0,0)'; this.children[0].style.opacity='0'"><svg style="opacity:0; transition:opacity 0.2s; color:white;" width="48" height="48" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></a>` : ''}
+                </div>
+                <div style="padding:16px;">
+                    <div style="font-size:14px; font-weight:600; color:var(--text); margin-bottom:8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escHtml(v.title || v.niche || 'Untitled')}</div>
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-size:12px; color:var(--text-2);">${v.created_at ? new Date(v.created_at).toLocaleDateString() : '—'}</span>
+                        <span style="font-size:12px; font-weight:700; color:white; background:rgba(255,255,255,0.1); padding:4px 8px; border-radius:12px;">👁 ${formatNumber(v.views || 0)}</span>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
         
         // Render Chart
         if (viewsChart) {
