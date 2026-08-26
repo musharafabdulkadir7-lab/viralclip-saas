@@ -343,9 +343,17 @@ function startStatusPolling(jobId) {
     const progressPct = document.getElementById('progress-pct');
     const runBtn = document.getElementById('run-clip-farm-btn');
 
+    // Guard: all elements must exist before starting
+    if (!progressContainer || !progressFill || !progressText || !runBtn) {
+        console.warn('startStatusPolling: required DOM elements missing, aborting poll.');
+        return;
+    }
+
     progressContainer.classList.remove('hidden');
     progressFill.style.width = '5%';
     if (pollingInterval) clearInterval(pollingInterval);
+
+    const BTN_ICON = `<svg width="18" height="18" viewBox="0 0 15 15" fill="none"><path d="M3 1.5L13.5 7.5L3 13.5V1.5Z" fill="currentColor"/></svg>`;
 
     pollingInterval = setInterval(async () => {
         try {
@@ -362,12 +370,11 @@ function startStatusPolling(jobId) {
                 const viralityBadge = document.getElementById('virality-badge');
                 if (pct >= 50 && viralityBadge && viralityBadge.style.display === 'none') {
                     viralityBadge.style.display = 'block';
-                    // Generate a high "viral" score (between 88 and 99)
                     const score = Math.floor(Math.random() * (99 - 88 + 1)) + 88;
-                    document.getElementById('virality-score').textContent = score;
+                    const scoreEl = document.getElementById('virality-score');
+                    if (scoreEl) scoreEl.textContent = score;
                 }
                 
-                // Animate pipeline steps
                 updatePipelineSteps(pct);
             }
 
@@ -375,13 +382,8 @@ function startStatusPolling(jobId) {
                 clearInterval(pollingInterval);
                 localStorage.removeItem('active_job_id');
                 runBtn.disabled = false;
-                runBtn.innerHTML = `
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                        <path d="M3 2.5L13.5 8L3 13.5V2.5Z" fill="currentColor"/>
-                    </svg>
-                    Find & Post Clip Now
-                `;
-                progressFill.style.width = '0%';
+                runBtn.innerHTML = `${BTN_ICON} Generate Clip`;
+                progressFill.style.width = '100%';
                 setTimeout(() => progressContainer.classList.add('hidden'), 4000);
 
                 if (data.url) {
@@ -396,13 +398,10 @@ function startStatusPolling(jobId) {
             console.error(e);
             clearInterval(pollingInterval);
             localStorage.removeItem('active_job_id');
-            runBtn.disabled = false;
-            runBtn.innerHTML = `
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                    <path d="M3 2.5L13.5 8L3 13.5V2.5Z" fill="currentColor"/>
-                </svg>
-                Find & Post Clip Now
-            `;
+            if (runBtn) {
+                runBtn.disabled = false;
+                runBtn.innerHTML = `${BTN_ICON} Generate Clip`;
+            }
         }
     }, 1500);
 }
@@ -506,12 +505,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (res.status === 402) {
                 document.getElementById('paywall-modal').classList.remove('hidden');
                 runBtn.disabled = false;
-                runBtn.innerHTML = `
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                        <path d="M3 2.5L13.5 8L3 13.5V2.5Z" fill="currentColor"/>
-                    </svg>
-                    Find & Post Clip Now
-                `;
+                runBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 15 15" fill="none"><path d="M3 1.5L13.5 7.5L3 13.5V1.5Z" fill="currentColor"/></svg> Generate Clip`;
                 return;
             }
 
@@ -532,22 +526,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             } else {
                 runBtn.disabled = false;
-                runBtn.innerHTML = `
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                        <path d="M3 2.5L13.5 8L3 13.5V2.5Z" fill="currentColor"/>
-                    </svg>
-                    Find & Post Clip Now
-                `;
+                runBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 15 15" fill="none"><path d="M3 1.5L13.5 7.5L3 13.5V1.5Z" fill="currentColor"/></svg> Generate Clip`;
             }
         } catch (e) {
             addMessage('Director AI', 'Connection error. Please try again.');
             runBtn.disabled = false;
-            runBtn.innerHTML = `
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                    <path d="M3 2.5L13.5 8L3 13.5V2.5Z" fill="currentColor"/>
-                </svg>
-                Find & Post Clip Now
-            `;
+            runBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 15 15" fill="none"><path d="M3 1.5L13.5 7.5L3 13.5V1.5Z" fill="currentColor"/></svg> Generate Clip`;
         }
     });
 
@@ -567,7 +551,8 @@ function cancelJob() {
     // Clear the stored job so the UI stops polling
     localStorage.removeItem('active_job_id');
     // Hide the progress card and virality badge
-    document.getElementById('progress-container').classList.add('hidden');
+    const progressContainerEl = document.getElementById('progress-container');
+    if (progressContainerEl) progressContainerEl.classList.add('hidden');
     const viralityBadge = document.getElementById('virality-badge');
     if (viralityBadge) viralityBadge.style.display = 'none';
     

@@ -172,5 +172,4 @@ def run_clip_pipeline(niche: str, user_id: str, job_id: str, is_free_tier: bool 
 
     except Exception as e:
         update_job_status(job_id, "error", 0, f"Critical Pipeline Error: {str(e)}", user_id=user_id)
-        raise e
 

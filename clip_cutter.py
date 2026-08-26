@@ -219,7 +219,7 @@ def cut_and_format_clip(
         print(f"[ClipCutter] ffmpeg error:\n{err}")
         return ""
     except subprocess.TimeoutExpired:
-        print("[ClipCutter] ffmpeg timed out (300s limit).")
+        print("[ClipCutter] ffmpeg timed out (600s limit).")
         return ""
 
 
