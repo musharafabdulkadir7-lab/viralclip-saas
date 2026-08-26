@@ -407,6 +407,9 @@ function startStatusPolling(jobId) {
 
 // ─── On Page Load ─────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+    // Force initialize layout state
+    switchTab('generate');
+    
     // Load saved brand kit settings
     loadBrandKit();
 

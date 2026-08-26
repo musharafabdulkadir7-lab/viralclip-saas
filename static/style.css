@@ -329,8 +329,8 @@ input:checked + .toggle-slider:before {
 }
 
 /* ─── Tab Content ───────────────────────────────────── */
-.tab-content { flex: 1; overflow-y: auto; display: flex; flex-direction: column; position: relative; z-index: 1; }
-.tab-content.hidden { display: none; }
+.tab-content { flex: 1; display: flex; flex-direction: column; overflow-y: auto; position: relative; z-index: 1; }
+.tab-content.hidden { display: none !important; }
 
 /* ─── Generate Tab Layout ───────────────────────────── */
 .generate-layout {
@@ -492,7 +492,7 @@ input:checked + .toggle-slider:before {
   flex-direction: column;
   gap: 11px;
 }
-.progress-card.hidden { display: none; }
+.progress-card.hidden { display: none !important; }
 .progress-header { display: flex; justify-content: space-between; align-items: center; }
 .progress-label { font-size: 13px; font-weight: 700; color: var(--text); letter-spacing: -0.1px; }
 #progress-pct { font-size: 13px; font-weight: 700; color: var(--blue); font-variant-numeric: tabular-nums; letter-spacing: -0.2px; }
@@ -704,7 +704,7 @@ input:checked + .toggle-slider:before {
   z-index: 999;
   animation: fadeIn 0.2s ease;
 }
-.modal-overlay.hidden { display: none; }
+.modal-overlay.hidden { display: none !important; }
 
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
@@ -1027,17 +1027,7 @@ body { overflow: hidden; }
   flex-shrink: 0;
 }
 
-.top-header .free-tier-badge {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 20px;
-  padding: 6px 14px;
-  font-size: 13px;
-  color: #a3a3a3;
-}
+.top-header .free-tier-badge { display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,0.05); border: 1px solid var(--border); border-radius: 20px; padding: 6px 14px; font-size: 13px; color: var(--text-2); white-space: nowrap; }
 
 .btn-upgrade {
   background: #dc2626;
@@ -1052,11 +1042,7 @@ body { overflow: hidden; }
 }
 .btn-upgrade:hover { filter: brightness(1.15); }
 
-.content-area {
-  flex: 1;
-  overflow-y: auto;
-  padding: 40px;
-}
+.content-area { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 
 /* Hide old wrappers */
 .app { display: none !important; }
@@ -1073,7 +1059,7 @@ body { overflow: hidden; }
   align-items: center;
   justify-content: center;
 }
-.brand-modal.hidden { display: none; }
+.brand-modal.hidden { display: none !important; }
 .brand-modal-inner {
   background: #111111;
   border: 1px solid rgba(255,255,255,0.1);
@@ -1084,4 +1070,3 @@ body { overflow: hidden; }
   box-shadow: 0 24px 60px rgba(0,0,0,0.6);
 }
 
-#free-tier-badge { display: flex !important; }

@@ -7,7 +7,7 @@
     <meta name="description" content="AI-powered tool that finds viral videos, cuts the best clip, and posts it to your YouTube channel automatically.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=20">
+    <link rel="stylesheet" href="/static/style.css?v=30">
 </head>
 <body>
 <div class="app-layout">
@@ -70,13 +70,14 @@
   <!-- MAIN CONTENT -->
   <div class="main-wrapper">
     <header class="top-header">
-      <div class="free-tier-badge hidden" id="free-tier-badge">
-        <span id="free-remaining">5</span>&nbsp;free clips left
-        <button class="btn-upgrade" onclick="window.location.href='/api/v1/create-checkout-session'">Upgrade $49</button>
-      </div>
-      <button class="btn btn-outline" id="yt-connect-btn" onclick="window.location.href='/api/v1/auth/youtube'">
+      <a href="/api/v1/auth/youtube" id="connect-youtube-btn" class="btn btn-connect">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.6 3.6 12 3.6 12 3.6s-7.6 0-9.4.5A3 3 0 0 0 .5 6.2 31.5 31.5 0 0 0 0 12a31.5 31.5 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.8.5 9.4.5 9.4.5s7.6 0 9.4-.5a3 3 0 0 0 2.1-2.1A31.5 31.5 0 0 0 24 12a31.5 31.5 0 0 0-.5-5.8zM9.8 15.6V8.4l6.3 3.6-6.3 3.6z"/></svg>
         Connect YouTube
-      </button>
+      </a>
+      <div class="yt-status-badge" id="yt-status-badge">
+        <span class="status-dot" id="yt-dot"></span>
+        <span id="yt-label">Not Connected</span>
+      </div>
     </header>
 
     <div class="content-area">
@@ -302,7 +303,10 @@
             </div>
         </div>
     </main>
-</div>
+
+    </div><!-- content-area -->
+  </div><!-- main-wrapper -->
+</div><!-- app-layout -->
 
 <!-- ── Paywall Modal ──────────────────────────────────── -->
 <div id="paywall-modal" class="modal-overlay hidden">
@@ -365,8 +369,6 @@
     </div>
 </div>
 
-<div id="toast-container"></div>
-
 <script>
 function startWorkerURI() {
     const userId = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1] || 'demo_user_123';
@@ -381,30 +383,27 @@ function showDownloadTip() {
 }
 </script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="/static/app.js?v=12"></script>
-    </div>
-  </div>
-</div>
+<script src="/static/app.js?v=22"></script>
 
+<!-- ── Brand Kit Modal ───────────────────────────────── -->
 <div id="brand-modal" class="brand-modal hidden">
   <div class="brand-modal-inner">
     <h2 style="font-size:26px; font-weight:700; margin-bottom:8px;">Brand Kit</h2>
     <p style="color:#a3a3a3; font-size:14px; margin-bottom:32px;">Customize how your AI-generated clips look and feel.</p>
-
     <label class="input-label">Custom Watermark / Handle</label>
     <input type="text" id="brand-handle" class="niche-input-lg" placeholder="@MyChannel" style="margin-bottom:20px;">
-
     <label class="input-label">Subtitle Style</label>
     <select id="brand-font" class="niche-input-lg" style="margin-bottom:32px; background:#222; appearance:auto;">
-      <option value="Hormozi">Alex Hormozi -- Bold Impact</option>
-      <option value="Ali">Ali Abdaal -- Clean Sans</option>
+      <option value="Hormozi">Alex Hormozi — Bold Impact</option>
+      <option value="Ali">Ali Abdaal — Clean Sans</option>
     </select>
-
     <div style="display:flex; gap:12px; justify-content:flex-end;">
       <button class="btn btn-outline" onclick="document.getElementById('brand-modal').classList.add('hidden')">Cancel</button>
-      <button class="btn btn-primary" onclick="saveBrandKit()">Save Brand Kit</button>
+      <button class="btn btn-generate" onclick="saveBrandKit()">Save Brand Kit</button>
     </div>
   </div>
 </div>
+
+<div id="toast-container"></div>
 </body>
 </html>
