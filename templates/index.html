@@ -10,6 +10,77 @@
     <link rel="stylesheet" href="/static/style.css?v=11">
 </head>
 <body>
+<div class="app-layout">
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+        <rect width="28" height="28" rx="8" fill="#dc2626"/>
+        <path d="M10 8.5L20.5 14L10 19.5V8.5Z" fill="white"/>
+      </svg>
+      <span class="sidebar-logo-text">ClipAI</span>
+    </div>
+
+    <span class="sidebar-section-label">Workspace</span>
+
+    <button class="sidebar-btn active" id="tab-generate" onclick="switchTab('generate')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polygon points="5 3 19 12 5 21 5 3"/>
+      </svg>
+      Studio
+    </button>
+
+    <button class="sidebar-btn" id="tab-analytics" onclick="switchTab('analytics')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="3" width="18" height="18" rx="2"/>
+        <line x1="3" y1="9" x2="21" y2="9"/>
+        <line x1="9" y1="21" x2="9" y2="9"/>
+      </svg>
+      My Clips
+    </button>
+
+    <button class="sidebar-btn" id="tab-autopost" onclick="switchTab('autopost')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/>
+        <polyline points="12 6 12 12 16 14"/>
+      </svg>
+      Auto-Pilot
+    </button>
+
+    <span class="sidebar-section-label" style="margin-top:8px;">Customize</span>
+
+    <button class="sidebar-btn" onclick="document.getElementById('brand-modal').classList.remove('hidden')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+      </svg>
+      Brand Kit
+    </button>
+
+    <div class="sidebar-spacer"></div>
+
+    <div class="sidebar-worker-block">
+      <div class="worker-status" id="worker-status">
+        <div class="status-dot" id="worker-dot"></div>
+        <span class="worker-label" id="worker-label">Worker Offline</span>
+      </div>
+      <p>Renders videos on your PC</p>
+    </div>
+  </aside>
+
+  <!-- MAIN CONTENT -->
+  <div class="main-wrapper">
+    <header class="top-header">
+      <div class="free-tier-badge hidden" id="free-tier-badge">
+        <span id="free-remaining">5</span>&nbsp;free clips left
+        <button class="btn-upgrade" onclick="window.location.href='/api/v1/create-checkout-session'">Upgrade $49</button>
+      </div>
+      <button class="btn btn-outline" id="yt-connect-btn" onclick="window.location.href='/api/v1/auth/youtube'">
+        Connect YouTube
+      </button>
+    </header>
+
+    <div class="content-area">
+
 <div class="app">
 
     <!-- ── Background Glow Effects ────────────────── -->
@@ -353,5 +424,29 @@ function showDownloadTip() {
 </script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="/static/app.js?v=12"></script>
+    </div>
+  </div>
+</div>
+
+<div id="brand-modal" class="brand-modal hidden">
+  <div class="brand-modal-inner">
+    <h2 style="font-size:26px; font-weight:700; margin-bottom:8px;">Brand Kit</h2>
+    <p style="color:#a3a3a3; font-size:14px; margin-bottom:32px;">Customize how your AI-generated clips look and feel.</p>
+
+    <label class="input-label">Custom Watermark / Handle</label>
+    <input type="text" id="brand-handle" class="niche-input-lg" placeholder="@MyChannel" style="margin-bottom:20px;">
+
+    <label class="input-label">Subtitle Style</label>
+    <select id="brand-font" class="niche-input-lg" style="margin-bottom:32px; background:#222; appearance:auto;">
+      <option value="Hormozi">Alex Hormozi -- Bold Impact</option>
+      <option value="Ali">Ali Abdaal -- Clean Sans</option>
+    </select>
+
+    <div style="display:flex; gap:12px; justify-content:flex-end;">
+      <button class="btn btn-outline" onclick="document.getElementById('brand-modal').classList.add('hidden')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveBrandKit()">Save Brand Kit</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>

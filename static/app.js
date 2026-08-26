@@ -86,12 +86,38 @@ function updateYouTubeUI(connected) {
 
 // ─── Tab Switching ────────────────────────────────────────────────────────────
 function switchTab(tab) {
+    // Hide all tab content panels
     document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+    // Deactivate all sidebar buttons (new layout) AND old nav-tabs (fallback)
+    document.querySelectorAll('.sidebar-btn').forEach(el => el.classList.remove('active'));
     document.querySelectorAll('.nav-tab').forEach(el => el.classList.remove('active'));
-    document.getElementById('tab-content-' + tab).classList.remove('hidden');
-    document.getElementById('tab-' + tab).classList.add('active');
+    // Show selected tab content
+    const content = document.getElementById('tab-content-' + tab);
+    if (content) content.classList.remove('hidden');
+    // Activate the correct sidebar button
+    const btn = document.getElementById('tab-' + tab);
+    if (btn) btn.classList.add('active');
     if (tab === 'analytics') loadAnalytics();
     if (tab === 'autopost') loadAutoPostSettings();
+}
+
+// ─── Brand Kit ────────────────────────────────────────────────────────────────
+function saveBrandKit() {
+    const handle = document.getElementById('brand-handle')?.value.trim() || '';
+    const font   = document.getElementById('brand-font')?.value || 'Hormozi';
+    localStorage.setItem('clipai_handle', handle);
+    localStorage.setItem('clipai_font',   font);
+    document.getElementById('brand-modal').classList.add('hidden');
+    showToast('Brand Kit saved!');
+}
+
+function loadBrandKit() {
+    const handle = localStorage.getItem('clipai_handle') || '';
+    const font   = localStorage.getItem('clipai_font')   || 'Hormozi';
+    const handleEl = document.getElementById('brand-handle');
+    const fontEl   = document.getElementById('brand-font');
+    if (handleEl) handleEl.value = handle;
+    if (fontEl)   fontEl.value   = font;
 }
 
 // ─── Dynamic Ticker ───────────────────────────────────────────────────────────
@@ -381,6 +407,9 @@ function startStatusPolling(jobId) {
 
 // ─── On Page Load ─────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+    // Load saved brand kit settings
+    loadBrandKit();
+
     // Handle YouTube OAuth redirect
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('youtube') === 'connected') {
