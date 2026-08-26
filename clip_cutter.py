@@ -84,6 +84,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     end_sec = start_sec + duration
     use_yellow = True
     
+    power_words = {
+        "money": ("{\\c&H00FF00&}", "💸"),
+        "crazy": ("{\\c&H0000FF&}", "🤯"),
+        "secret": ("{\\c&H00FFFF&}", "🤫"),
+        "viral": ("{\\c&H0000FF&}", "🚀"),
+        "win": ("{\\c&H00FF00&}", "🏆"),
+        "stop": ("{\\c&H0000FF&}", "🛑")
+    }
+
     for start_ts, end_ts, text in blocks:
         t_start = parse_time(start_ts)
         t_end = parse_time(end_ts)
@@ -94,6 +103,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         text = text.strip().replace('\n', ' ')
         if not text:
             continue
+            
+        # Highlight power words
+        lower_text = text.lower()
+        for word, (color_code, emoji) in power_words.items():
+            if word in lower_text:
+                # Replace exact word ignoring case with colored version + emoji (re imported at top)
+                text = re.sub(rf'\b({word})\b', rf'{color_code}\1{{\\r}}{emoji}', text, flags=re.IGNORECASE)
+
         style = "Hormozi" if use_yellow else "HormoziWhite"
         use_yellow = not use_yellow
         events.append(f"Dialogue: 0,{format_ass_time(t_start)},{format_ass_time(t_end)},{style},,0,0,0,,{text}")
@@ -155,7 +172,7 @@ def cut_and_format_clip(
     # ─── Filter Complex (Ultra-Fast Cinematic Blur Background) ───────────
     # Replaced CPU-heavy boxblur with scale down/scale up trick (100x faster)
     filter_complex = (
-        "[0:v]setpts=PTS/1.05,split=2[bg][fg]; "
+        "[0:v]setpts=PTS/1.1,split=2[bg][fg]; "
         "[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,scale=108:192,scale=1080:1920:flags=bilinear,eq=brightness=-0.15[bg_blurred]; "
         # Scale foreground, then apply a slow continuous 15% zoom over 60 seconds (pattern interrupt)
         "[fg]scale=1080:1920:force_original_aspect_ratio=decrease,zoompan=z='min(zoom+0.0015,1.15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920[fg_zoomed]; "
@@ -166,8 +183,8 @@ def cut_and_format_clip(
         f"{ass_filter}[v_out]"
     )
 
-    # ─── Audio Filter ─────────────────────────────────────────────────────
-    af_filter = "atempo=1.05"
+    # ─── Audio Filter (10% Speedup for Pacing/Silence Reduction) ───────────
+    af_filter = "atempo=1.1"
 
     cmd = [
         FFMPEG,
