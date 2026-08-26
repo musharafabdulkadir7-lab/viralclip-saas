@@ -9,6 +9,12 @@ function updateWorkerUI(alive) {
     if (alive) {
         dot.className = 'status-dot connected';
         label.textContent = 'Worker Active';
+        // Auto-close the worker modal the moment worker comes online
+        const workerModal = document.getElementById('worker-modal');
+        if (workerModal && !workerModal.classList.contains('hidden')) {
+            workerModal.classList.add('hidden');
+            showToast('Worker is active and ready! Click Generate to start.', 'success');
+        }
     } else {
         dot.className = 'status-dot';
         label.textContent = 'Worker Offline';
@@ -419,9 +425,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!workerIsAlive) {
             const userId = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1] || 'demo_user_123';
             window.location.href = `clipai://start?user_id=${userId}`;
-            // Show the modal in case they haven't downloaded the app yet
+            // Only show the modal if the worker isn't already running
             document.getElementById('worker-modal').classList.remove('hidden');
-            addMessage('Director AI', 'Worker is offline. Starting it now... Once the **🟢 Worker Active** badge appears, click the button again to generate your clip!');
+            addMessage('Director AI', 'Worker is offline. Starting it now... The modal will close automatically once the **🟢 Worker Active** badge appears!');
             return; // Don't submit the job yet — wait for worker to come online
         }
 
