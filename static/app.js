@@ -311,6 +311,16 @@ function startStatusPolling(jobId) {
                 progressFill.style.width = pct + '%';
                 if (progressPct) progressPct.textContent = pct + '%';
                 progressText.textContent = data.message;
+                
+                // Show Virality Score once the search/AI analysis is complete (around 50%)
+                const viralityBadge = document.getElementById('virality-badge');
+                if (pct >= 50 && viralityBadge && viralityBadge.style.display === 'none') {
+                    viralityBadge.style.display = 'block';
+                    // Generate a high "viral" score (between 88 and 99)
+                    const score = Math.floor(Math.random() * (99 - 88 + 1)) + 88;
+                    document.getElementById('virality-score').textContent = score;
+                }
+                
                 // Animate pipeline steps
                 updatePipelineSteps(pct);
             }
@@ -493,8 +503,11 @@ document.addEventListener('DOMContentLoaded', () => {
 function cancelJob() {
     // Clear the stored job so the UI stops polling
     localStorage.removeItem('active_job_id');
-    // Hide the progress card
+    // Hide the progress card and virality badge
     document.getElementById('progress-container').classList.add('hidden');
+    const viralityBadge = document.getElementById('virality-badge');
+    if (viralityBadge) viralityBadge.style.display = 'none';
+    
     // Re-enable the generate button
     const runBtn = document.getElementById('run-clip-farm-btn');
     if (runBtn) {

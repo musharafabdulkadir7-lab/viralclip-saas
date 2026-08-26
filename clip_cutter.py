@@ -157,8 +157,9 @@ def cut_and_format_clip(
     filter_complex = (
         "[0:v]setpts=PTS/1.05,split=2[bg][fg]; "
         "[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,scale=108:192,scale=1080:1920:flags=bilinear,eq=brightness=-0.15[bg_blurred]; "
-        "[fg]scale=1080:1920:force_original_aspect_ratio=decrease[fg_scaled]; "
-        "[bg_blurred][fg_scaled]overlay=(W-w)/2:(H-h)/2[merged]; "
+        # Scale foreground, then apply a slow continuous 15% zoom over 60 seconds (pattern interrupt)
+        "[fg]scale=1080:1920:force_original_aspect_ratio=decrease,zoompan=z='min(zoom+0.0015,1.15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920[fg_zoomed]; "
+        "[bg_blurred][fg_zoomed]overlay=(W-w)/2:(H-h)/2[merged]; "
         "[merged]eq=contrast=1.02:saturation=1.04,"
         f"drawtext=text='{safe_caption}':fontsize=38:fontcolor=white:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-text_h-350:font=Arial Bold:box=1:boxcolor=black@0.55:boxborderw=14:fix_bounds=1,"
         f"drawtext=text='{safe_watermark}':fontsize=26:fontcolor=white@0.70:borderw=1:bordercolor=black@0.5:x=40:y=80:font=Arial:fix_bounds=1"
