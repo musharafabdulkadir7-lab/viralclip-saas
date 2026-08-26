@@ -1193,3 +1193,37 @@ body { overflow: hidden; }
   from { transform: translateX(0); }
   to   { transform: translateX(-50%); }
 }
+
+.day-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  user-select: none;
+}
+
+.day-pill:hover {
+  border-color: var(--blue);
+  color: var(--text);
+}
+
+.day-pill input[type=checkbox] {
+  accent-color: var(--blue);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+.day-pill:has(input:checked) {
+  background: var(--blue-dim);
+  border-color: var(--blue);
+  color: var(--blue-light);
+}
