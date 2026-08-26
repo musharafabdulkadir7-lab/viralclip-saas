@@ -176,9 +176,11 @@ async function loadAnalytics() {
         chartContainer.style.width = '100%';
         chartContainer.innerHTML = '<canvas id="viewsChart"></canvas>';
         
-        // Insert chart right before the gallery header
+        // Insert chart right before the gallery header (only if not already inserted)
         const galleryHeader = document.querySelector('.gallery-header');
-        galleryHeader.parentNode.insertBefore(chartContainer, galleryHeader);
+        if (galleryHeader && !document.getElementById('viewsChart')) {
+            galleryHeader.parentNode.insertBefore(chartContainer, galleryHeader);
+        }
         
         // Render video cards
         galleryGrid.innerHTML = data.videos.map(v => {
@@ -549,7 +551,18 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-// ─── Cancel Job ───────────────────────────────────────────────────────────────
+    // Paywall modal buttons
+    document.getElementById('checkout-btn').addEventListener('click', async () => {
+        const res = await fetch('/api/v1/create-checkout-session', { method: 'POST' });
+        const data = await res.json();
+        if (data.checkout_url) window.location.href = data.checkout_url;
+    });
+    document.getElementById('close-modal').addEventListener('click', () => {
+        document.getElementById('paywall-modal').classList.add('hidden');
+    });
+});
+
+// ─── Cancel Job (global scope — called from onclick in HTML) ──────────────────
 function cancelJob() {
     // Clear the stored job so the UI stops polling
     localStorage.removeItem('active_job_id');
@@ -563,28 +576,18 @@ function cancelJob() {
     if (runBtn) {
         runBtn.disabled = false;
         runBtn.innerHTML = `
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <path d="M3 2.5L13.5 8L3 13.5V2.5Z" fill="currentColor"/>
+            <svg width="18" height="18" viewBox="0 0 15 15" fill="none">
+                <path d="M3 1.5L13.5 7.5L3 13.5V1.5Z" fill="currentColor"/>
             </svg>
-            Find &amp; Post Clip Now
+            Generate Clip
         `;
     }
     resetPipelineSteps();
     addMessage('Director AI', 'Job cancelled. Ready to generate a new clip!');
 }
 
-    // Paywall modal buttons
-    document.getElementById('checkout-btn').addEventListener('click', async () => {
-        const res = await fetch('/api/v1/create-checkout-session', { method: 'POST' });
-        const data = await res.json();
-        if (data.checkout_url) window.location.href = data.checkout_url;
-    });
-    document.getElementById('close-modal').addEventListener('click', () => {
-        document.getElementById('paywall-modal').classList.add('hidden');
-    });
-});
-
 // ─── Auto Post ────────────────────────────────────────────────────────────────
+
 function addTimeInput(value = '') {
     const container = document.getElementById('times-container');
     const row = document.createElement('div');
@@ -625,6 +628,7 @@ async function loadAutoPostSettings() {
 
 async function saveAutoPostSettings() {
     const btn = document.getElementById('btn-save-autopost');
+    const prevText = btn.textContent;
     btn.textContent = 'Saving...';
     btn.disabled = true;
     
