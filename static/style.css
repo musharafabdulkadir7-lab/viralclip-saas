@@ -1227,3 +1227,106 @@ body { overflow: hidden; }
   border-color: var(--blue);
   color: var(--blue-light);
 }
+
+/* ── Clip Gallery Cards ─────────────────────────────────────────── */
+.clip-card {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+}
+
+.clip-card:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 16px 40px rgba(0,0,0,0.4);
+  border-color: rgba(59,130,246,0.35);
+}
+
+.clip-card-thumb {
+  width: 100%;
+  aspect-ratio: 9/16;
+  background: var(--bg-1);
+  background-size: cover;
+  background-position: center;
+  position: relative;
+}
+
+.clip-card-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.clip-card:hover .clip-card-overlay {
+  background: rgba(0,0,0,0.45);
+}
+
+.clip-play-btn {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.15);
+  backdrop-filter: blur(8px);
+  border: 2px solid rgba(255,255,255,0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transform: scale(0.8);
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.clip-card:hover .clip-play-btn {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.clip-score-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: rgba(0,0,0,0.65);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255,255,255,0.15);
+  color: white;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 20px;
+}
+
+.clip-card-info {
+  padding: 14px 16px;
+}
+
+.clip-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.clip-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.clip-views {
+  font-weight: 700;
+  color: white;
+  background: rgba(255,255,255,0.08);
+  padding: 3px 8px;
+  border-radius: 10px;
+}

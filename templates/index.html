@@ -7,7 +7,7 @@
     <meta name="description" content="AI-powered tool that finds viral videos, cuts the best clip, and posts it to your YouTube channel automatically.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=31">
+    <link rel="stylesheet" href="/static/style.css?v=32">
 </head>
 <body>
 <div class="app-layout">
@@ -382,8 +382,25 @@ function showDownloadTip() {
     }, 10000);
 }
 </script>
+
+<!-- ── In-App Video Player Modal ─────────────────────── -->
+<div id="player-modal" class="modal-overlay hidden" onclick="if(event.target===this)closePlayer()">
+    <div style="position:relative; max-width:360px; width:90vw;">
+        <button onclick="closePlayer()" style="position:absolute;top:-42px;right:0;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);color:white;width:36px;height:36px;border-radius:50%;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(10px)">✕</button>
+        <div style="aspect-ratio:9/16;border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,0.1);box-shadow:0 24px 80px rgba(0,0,0,0.8);">
+            <iframe id="player-iframe" src="" frameborder="0" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen style="width:100%;height:100%;"></iframe>
+        </div>
+        <div id="player-info" style="margin-top:16px;padding:16px;background:rgba(255,255,255,0.05);border-radius:12px;border:1px solid rgba(255,255,255,0.08);">
+            <div id="player-title" style="font-size:15px;font-weight:600;color:white;margin-bottom:8px;"></div>
+            <div style="display:flex;gap:10px;">
+                <a id="player-yt-link" href="#" target="_blank" class="btn btn-outline" style="flex:1;text-align:center;font-size:13px;padding:8px 0;">Open on YouTube ↗</a>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="/static/app.js?v=22"></script>
+<script src="/static/app.js?v=23"></script>
 
 <!-- ── Brand Kit Modal ───────────────────────────────── -->
 <div id="brand-modal" class="brand-modal hidden">

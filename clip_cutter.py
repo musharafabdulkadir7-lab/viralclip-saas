@@ -35,6 +35,32 @@ def _get_ffmpeg() -> str:
 
 FFMPEG = _get_ffmpeg()
 
+def get_best_h264_encoder() -> tuple[str, list[str]]:
+    """
+    Probes ffmpeg to find the best available hardware accelerated h264 encoder.
+    Returns a tuple: (encoder_name, [extra_args])
+    """
+    try:
+        res = subprocess.run([FFMPEG, "-hide_banner", "-encoders"], capture_output=True, text=True)
+        out = res.stdout
+        # NVidia NVENC (Absolute fastest, best quality for hardware)
+        if "h264_nvenc" in out:
+            print("[ClipCutter] 🚀 Found NVIDIA GPU! Using NVENC acceleration.")
+            return "h264_nvenc", ["-preset", "p4", "-cq", "26"]
+        # AMD AMF
+        elif "h264_amf" in out:
+            print("[ClipCutter] 🚀 Found AMD GPU! Using AMF acceleration.")
+            return "h264_amf", ["-quality", "speed", "-rc", "cqp", "-qp_i", "23"]
+        # Intel QSV
+        elif "h264_qsv" in out:
+            print("[ClipCutter] 🚀 Found Intel GPU! Using QSV acceleration.")
+            return "h264_qsv", ["-preset", "faster", "-q", "23"]
+    except Exception:
+        pass
+        
+    print("[ClipCutter] 🐢 No compatible GPU found. Using CPU fallback (libx264).")
+    return "libx264", ["-preset", "veryfast", "-crf", "23", "-threads", "0"]
+
 # Channel watermark text — buyers should change this to their channel name
 WATERMARK_TEXT = "@FinanceClips"
 
@@ -133,10 +159,11 @@ def cut_and_format_clip(
     output_filename: str = None,
     watermark: str = None,
     sub_path: str = None,
+    broll_path: str = None,
 ) -> str:
     """
-    Cuts a clip, formats it to 9:16 using a cinematic blurred background,
-    applies speed+color transformation, and burns a caption, watermark, and subtitles.
+    Cuts a clip, formats it to 9:16 using either a cinematic blurred background OR a split-screen 
+    B-Roll mode if broll_path is provided. Applies speed+color transformation, and burns subtitles.
     """
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -169,45 +196,65 @@ def cut_and_format_clip(
             safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
             ass_filter = f",subtitles={safe_ass}"
 
-    # ─── Filter Complex (Ultra-Fast Cinematic Blur Background) ───────────
-    # Replaced CPU-heavy boxblur with scale down/scale up trick (100x faster)
-    filter_complex = (
-        "[0:v]setpts=PTS/1.1,split=2[bg][fg]; "
-        "[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,scale=108:192,scale=1080:1920:flags=bilinear,eq=brightness=-0.15[bg_blurred]; "
-        # Scale foreground, then apply a slow continuous 15% zoom over 60 seconds (pattern interrupt)
-        "[fg]scale=1080:1920:force_original_aspect_ratio=decrease,zoompan=z='min(zoom+0.0015,1.15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920[fg_zoomed]; "
-        "[bg_blurred][fg_zoomed]overlay=(W-w)/2:(H-h)/2[merged]; "
-        "[merged]eq=contrast=1.02:saturation=1.04,"
-        f"drawtext=text='{safe_caption}':fontsize=38:fontcolor=white:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-text_h-350:font=Arial Bold:box=1:boxcolor=black@0.55:boxborderw=14:fix_bounds=1,"
-        f"drawtext=text='{safe_watermark}':fontsize=26:fontcolor=white@0.70:borderw=1:bordercolor=black@0.5:x=40:y=80:font=Arial:fix_bounds=1"
-        f"{ass_filter}[v_out]"
-    )
+    # ─── Filter Complex ───────────
+    # Auto-detect GPU hardware encoder (runs fast, cached per-clip)
+    encoder, encoder_args = get_best_h264_encoder()
 
-    # ─── Audio Filter (10% Speedup for Pacing/Silence Reduction) ───────────
-    af_filter = "atempo=1.1"
-
-    cmd = [
-        FFMPEG,
-        "-y",
-        "-ss", str(start_sec),
-        "-t", str(duration),
-        "-i", video_path,
-        "-filter_complex", filter_complex,
-        "-map", "[v_out]",
-        "-map", "0:a",
-        "-af", af_filter,
-        "-c:v", "libx264",
-        "-preset", "veryfast",   # was 'medium' — 4x faster encode
-        "-crf", "23",            # was 18 — standard quality, half the file size
-        "-c:a", "aac",
-        "-b:a", "128k",          # was 192k — plenty for Shorts audio
-        "-threads", "0",         # use all available CPU cores
-        "-movflags", "+faststart",
-        output_path,
-    ]
+    if broll_path and os.path.exists(broll_path):
+        # Split-Screen Mode (Top: Original, Bottom: B-Roll)
+        import random
+        broll_start = random.randint(0, 60)
+        
+        filter_complex = (
+            "[0:v]setpts=PTS/1.1,"
+            "scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[top]; "
+            "[1:v]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[bottom]; "
+            "[top][bottom]vstack=inputs=2[merged]; "
+            "[merged]eq=contrast=1.02:saturation=1.04,"
+            f"drawtext=text='{safe_caption}':fontsize=38:fontcolor=white:borderw=2:bordercolor=black:x=(w-text_w)/2:y=(h/2)-text_h-20:font=Arial Bold:box=1:boxcolor=black@0.55:boxborderw=14:fix_bounds=1,"
+            f"drawtext=text='{safe_watermark}':fontsize=26:fontcolor=white@0.70:borderw=1:bordercolor=black@0.5:x=40:y=80:font=Arial:fix_bounds=1"
+            f"{ass_filter}[v_out]"
+        )
+        
+        cmd = [
+            FFMPEG, "-y",
+            "-ss", str(start_sec), "-t", str(duration), "-i", video_path,
+            "-stream_loop", "-1", "-ss", str(broll_start), "-t", str(duration), "-i", broll_path,
+            "-filter_complex", filter_complex,
+            "-map", "[v_out]",
+            "-map", "0:a",
+            "-af", "atempo=1.1",
+            "-c:v", encoder, *encoder_args,
+            "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
+            output_path,
+        ]
+    else:
+        # Standard Cinematic Blur Mode
+        filter_complex = (
+            "[0:v]setpts=PTS/1.1,split=2[bg][fg]; "
+            "[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,scale=108:192,scale=1080:1920:flags=bilinear,eq=brightness=-0.15[bg_blurred]; "
+            "[fg]scale=1080:1920:force_original_aspect_ratio=decrease,zoompan=z='min(zoom+0.0015,1.15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920[fg_zoomed]; "
+            "[bg_blurred][fg_zoomed]overlay=(W-w)/2:(H-h)/2[merged]; "
+            "[merged]eq=contrast=1.02:saturation=1.04,"
+            f"drawtext=text='{safe_caption}':fontsize=38:fontcolor=white:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-text_h-350:font=Arial Bold:box=1:boxcolor=black@0.55:boxborderw=14:fix_bounds=1,"
+            f"drawtext=text='{safe_watermark}':fontsize=26:fontcolor=white@0.70:borderw=1:bordercolor=black@0.5:x=40:y=80:font=Arial:fix_bounds=1"
+            f"{ass_filter}[v_out]"
+        )
+        
+        cmd = [
+            FFMPEG, "-y",
+            "-ss", str(start_sec), "-t", str(duration), "-i", video_path,
+            "-filter_complex", filter_complex,
+            "-map", "[v_out]",
+            "-map", "0:a",
+            "-af", "atempo=1.1",
+            "-c:v", encoder, *encoder_args,
+            "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
+            output_path,
+        ]
 
     print(f"[ClipCutter] Processing {start_sec}s-{end_sec}s ({duration}s) | '{caption}'")
-    print(f"[ClipCutter] Preset: veryfast | CRF: 23 | Threads: auto")
+    print(f"[ClipCutter] Encoder: {encoder} | Mode: {'split-screen' if broll_path else 'cinematic blur'}")
 
     try:
         result = subprocess.run(cmd, timeout=600, check=True, capture_output=True)
@@ -231,6 +278,7 @@ def cut_multipart_clips(
     num_parts: int,
     watermark: str = None,
     sub_path: str = None,
+    broll_path: str = None,
 ) -> list[str]:
     """
     Cuts a longer segment into multiple parts (Part 1, Part 2, etc.)
@@ -248,20 +296,18 @@ def cut_multipart_clips(
         if part_end - part_start > 56:
             part_end = part_start + 56
 
-        if num_parts > 1:
-            part_caption = f"{caption} (Part {i+1})"
-        else:
-            part_caption = caption
-        
-        print(f"\n[ClipCutter] --- Generating Part {i+1}/{num_parts} ---")
+        part_caption = f"{caption} (Part {i+1})" if num_parts > 1 else caption
+        out_name = f"clip_{int(time.time())}_pt{i+1}.mp4"
+
         path = cut_and_format_clip(
             video_path=video_path,
             start_sec=part_start,
             end_sec=part_end,
             caption=part_caption,
-            output_filename=f"clip_{int(time.time())}_part{i+1}.mp4",
+            output_filename=out_name,
             watermark=watermark,
             sub_path=sub_path,
+            broll_path=broll_path,
         )
         if path:
             clip_paths.append(path)

@@ -110,3 +110,36 @@ def download_video_and_subs(url: str, video_id: str) -> dict:
 
     print(f"[Downloader] Done: {result['video_path']}")
     return result
+
+def get_broll_video() -> str:
+    """
+    Downloads and caches a default 'satisfying' B-Roll video (e.g. GTA V or Minecraft parkour).
+    Returns the path to the cached mp4.
+    """
+    broll_dir = os.path.join(str(Path.home() / ".clipai"), "broll")
+    os.makedirs(broll_dir, exist_ok=True)
+    broll_path = os.path.join(broll_dir, "gta_broll.mp4")
+    
+    if os.path.exists(broll_path):
+        return broll_path
+
+    # Fallback to a well known satisfying gameplay video on YouTube (no copyright, standard parkour)
+    broll_url = "https://www.youtube.com/watch?v=n_Dv4JMmAWE" # Example GTA V car jumping
+    print("[Downloader] Caching B-Roll video for split-screen mode...")
+    
+    ydl_opts = {
+        "format": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "outtmpl": broll_path,
+        "quiet": True,
+        "no_warnings": True,
+        "ffmpeg_location": _get_ffmpeg_exe()
+    }
+    
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([broll_url])
+        return broll_path
+    except Exception as e:
+        print(f"[Downloader] Failed to cache B-roll: {e}")
+        return ""
+
