@@ -41,7 +41,7 @@ def get_best_h264_encoder() -> tuple[str, list[str]]:
     Returns a tuple: (encoder_name, [extra_args])
     """
     try:
-        res = subprocess.run([FFMPEG, "-hide_banner", "-encoders"], capture_output=True, text=True)
+        res = subprocess.run([FFMPEG, "-hide_banner", "-encoders"], capture_output=True, text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         out = res.stdout
         # NVidia NVENC (Absolute fastest, best quality for hardware)
         if "h264_nvenc" in out:
@@ -257,7 +257,7 @@ def cut_and_format_clip(
     print(f"[ClipCutter] Encoder: {encoder} | Mode: {'split-screen' if broll_path else 'cinematic blur'}")
 
     try:
-        result = subprocess.run(cmd, timeout=600, check=True, capture_output=True)
+        result = subprocess.run(cmd, timeout=600, check=True, capture_output=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         size_mb = os.path.getsize(output_path) / (1024 * 1024)
         print(f"[ClipCutter] Done: {output_path} ({size_mb:.1f} MB)")
         return output_path

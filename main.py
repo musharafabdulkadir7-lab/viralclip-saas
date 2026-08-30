@@ -188,7 +188,7 @@ async def reset_analytics(request: Request):
 @app.get("/api/v1/worker/version")
 async def get_worker_version():
     """Returns the latest worker version so the client can auto-update."""
-    return {"version": "1.3.0"}
+    return {"version": "1.4.0"}
 
 @app.get("/api/v1/auto-post/settings")
 async def get_auto_post_settings(request: Request):
