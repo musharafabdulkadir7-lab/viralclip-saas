@@ -1,6 +1,12 @@
 // ─── Worker Connection State ──────────────────────────────────────────────────
 let workerIsAlive = false;
 
+function startWorkerURI() {
+    const userId = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1] || 'demo_user_123';
+    window.location.href = `clipai://start?user_id=${userId}`;
+    showToast('Starting local worker...', 'info');
+}
+
 // ─── In-App Video Player ───────────────────────────────────────────────────────
 function openPlayer(videoId, youtubeUrl, title) {
     const modal = document.getElementById('player-modal');
