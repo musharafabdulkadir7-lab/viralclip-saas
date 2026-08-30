@@ -37,12 +37,6 @@ function updateWorkerUI(alive) {
     if (alive) {
         dot.className = 'status-dot connected';
         label.textContent = 'Worker Active';
-        // Auto-close the worker modal the moment worker comes online
-        const workerModal = document.getElementById('worker-modal');
-        if (workerModal && !workerModal.classList.contains('hidden')) {
-            workerModal.classList.add('hidden');
-            showToast('Worker is active and ready! Click Generate to start.', 'success');
-        }
     } else {
         dot.className = 'status-dot';
         label.textContent = 'Worker Offline';
