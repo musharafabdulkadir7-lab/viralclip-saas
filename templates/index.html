@@ -64,6 +64,7 @@
         <span class="worker-label" id="worker-label">Worker Offline</span>
       </div>
       <p>Renders videos on your PC</p>
+      <a href="/static/ClipAI_Worker.exe" download style="display:block; margin-top:8px; text-decoration:none; color:var(--blue-light); font-size:12px; font-weight:600; background:rgba(59,130,246,0.1); padding:6px; border-radius:6px; text-align:center;">↓ Download Worker App</a>
     </div>
   </aside>
 
@@ -339,49 +340,7 @@
     </div>
 </div>
 
-<!-- ── Worker App Modal ───────────────────────────────── -->
-<div id="worker-modal" class="modal-overlay hidden">
-    <div class="glass-modal modal-box">
-        <div class="modal-icon">💻</div>
-        <h2 class="modal-title">Desktop Worker App</h2>
-        <p class="modal-desc" style="text-align:left">
-            YouTube blocks cloud servers from downloading videos. Run the lightweight <strong>ClipAI Worker</strong> on your Windows PC — it processes videos locally and uploads them directly to your YouTube channel.
-        </p>
-        <div class="modal-features" style="background:var(--amber-dim);border-color:rgba(251,191,36,0.2)">
-            <strong style="color:var(--amber);font-size:12.5px;letter-spacing:0.02em">⚠️ WINDOWS SMARTSCREEN</strong>
-            <p style="font-size:12.5px;color:var(--text-2);line-height:1.55;margin:0">
-                Click <strong>"More info"</strong> then <strong>"Run anyway"</strong> when Windows flags the app as unrecognized.
-            </p>
-        </div>
-        <div style="display:flex;gap:10px;margin-top:4px">
-            <a href="#" id="start-worker-btn" class="btn btn-generate" style="flex:1" onclick="startWorkerURI()">
-                ⚡ Start Worker
-            </a>
-            <a href="/static/ClipAI_Worker.exe" download="ClipAI_Worker.exe" class="btn btn-outline" style="flex:1" onclick="showDownloadTip()">
-                ⬇ Download App
-            </a>
-        </div>
-        <div id="download-tip" style="display:none;margin-top:14px;padding:12px 14px;background:var(--blue-dim);border:1px solid rgba(59,130,246,0.2);border-radius:var(--radius-sm);text-align:left">
-            <strong style="color:var(--blue);font-size:12.5px;display:block;margin-bottom:4px">⬇️ Download Started!</strong>
-            <p style="font-size:12.5px;color:var(--text-2);margin:0;line-height:1.5">Look in the <strong>top-right corner</strong> of your browser. Click the file to open it — it sets itself up automatically!</p>
-        </div>
-        <button id="close-worker-modal" class="btn btn-ghost" style="margin-top:12px" onclick="document.getElementById('worker-modal').classList.add('hidden')">I'll do it later</button>
-    </div>
-</div>
 
-<script>
-function startWorkerURI() {
-    const userId = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1] || 'demo_user_123';
-    window.location.href = `clipai://start?user_id=${userId}`;
-}
-function showDownloadTip() {
-    document.getElementById('download-tip').style.display = 'block';
-    setTimeout(() => {
-        document.getElementById('worker-modal').classList.add('hidden');
-        document.getElementById('download-tip').style.display = 'none';
-    }, 10000);
-}
-</script>
 
 <!-- ── In-App Video Player Modal ─────────────────────── -->
 <div id="player-modal" class="modal-overlay hidden" onclick="if(event.target===this)closePlayer()">

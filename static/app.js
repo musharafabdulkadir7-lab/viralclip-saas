@@ -520,14 +520,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const niche = document.getElementById('niche-input').value.trim() || 'motivation';
         
-        // If worker is offline, wake it up but DON'T submit yet — let them click again once it's active
+        // If worker is offline, tell them to start it
         if (!workerIsAlive) {
-            const userId = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1] || 'demo_user_123';
-            window.location.href = `clipai://start?user_id=${userId}`;
-            // Only show the modal if the worker isn't already running
-            document.getElementById('worker-modal').classList.remove('hidden');
-            addMessage('Director AI', 'Worker is offline. Starting it now... The modal will close automatically once the **🟢 Worker Active** badge appears!');
-            return; // Don't submit the job yet — wait for worker to come online
+            addMessage('Director AI', '⚠️ **Worker is offline.** Please start the ClipAI_Worker.exe app on your computer before generating a clip. If you haven\'t downloaded it yet, you can download it from the top bar.');
+            showToast('Worker is offline', 'error');
+            return;
         }
 
         runBtn.disabled = true;
