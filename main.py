@@ -701,6 +701,7 @@ async def create_checkout_session(request: Request, body: CheckoutRequest = None
     session_params = {
         "payment_method_types": ["card"],
         "client_reference_id": user_id,
+        "metadata": {"tier": tier, "user_id": user_id},
         "line_items": [{
             "price_data": {
                 "currency": "usd",
@@ -735,9 +736,10 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
         user_id = session.get("client_reference_id")
+        tier_purchased = (session.get("metadata") or {}).get("tier", "pro")
         if user_id and supabase:
             try:
-                supabase.table("users").update({"license": "lifetime"}).eq("id", user_id).execute()
+                supabase.table("users").update({"license": tier_purchased}).eq("id", user_id).execute()
             except Exception as e:
                 print(f"Stripe webhook DB error: {e}")
 
