@@ -225,7 +225,7 @@ def cut_and_format_clip(
             "-map", "[v_out]",
             "-map", "0:a",
             "-af", "atempo=1.1",
-            "-r", "60",
+            "-r", "30",
             "-pix_fmt", "yuv420p",
             "-c:v", encoder, *encoder_args,
             "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
@@ -236,7 +236,7 @@ def cut_and_format_clip(
         filter_complex = (
             "[0:v]setpts=PTS/1.1,split=2[bg][fg]; "
             "[bg]scale=1080:1920:force_original_aspect_ratio=increase:flags=fast_bilinear,crop=1080:1920,scale=108:192:flags=fast_bilinear,scale=1080:1920:flags=fast_bilinear,eq=brightness=-0.15[bg_blurred]; "
-            "[fg]scale=1080:1920:force_original_aspect_ratio=decrease:flags=fast_bilinear,zoompan=z='min(zoom+0.0015,1.15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920[fg_zoomed]; "
+            "[fg]scale=1080:1920:force_original_aspect_ratio=decrease:flags=fast_bilinear,zoompan=z='min(zoom+0.0015,1.15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30[fg_zoomed]; "
             "[bg_blurred][fg_zoomed]overlay=(W-w)/2:(H-h)/2[merged]; "
             "[merged]eq=contrast=1.02:saturation=1.04,"
             f"drawtext=text='{safe_caption}':fontsize=38:fontcolor=white:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-text_h-350:font=Arial Bold:box=1:boxcolor=black@0.55:boxborderw=14:fix_bounds=1,"
@@ -252,7 +252,7 @@ def cut_and_format_clip(
             "-map", "[v_out]",
             "-map", "0:a",
             "-af", "atempo=1.1",
-            "-r", "60",
+            "-r", "30",
             "-pix_fmt", "yuv420p",
             "-c:v", encoder, *encoder_args,
             "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
