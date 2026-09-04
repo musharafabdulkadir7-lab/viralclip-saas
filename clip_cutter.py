@@ -41,25 +41,25 @@ def get_best_h264_encoder() -> tuple[str, list[str]]:
     Returns a tuple: (encoder_name, [extra_args])
     """
     try:
-        res = subprocess.run([FFMPEG, "-hide_banner", "-encoders"], capture_output=True, text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        res = subprocess.run([FFMPEG, "-hide_banner", "-encoders"], capture_output=True, text=True, errors='replace', creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         out = res.stdout
-        # NVidia NVENC (Absolute fastest, best quality for hardware)
+        # NVIDIA NVENC (Ultra-fast dedicated GPU hardware encoder on RTX 2050)
         if "h264_nvenc" in out:
-            print("[ClipCutter] 🚀 Found NVIDIA GPU! Using NVENC acceleration.")
-            return "h264_nvenc", ["-preset", "p4", "-cq", "26"]
+            print("[ClipCutter] Found NVIDIA GPU! Engaging RTX NVENC hardware acceleration.")
+            return "h264_nvenc", ["-preset", "p1", "-tune", "ll", "-cq", "24", "-spatial-aq", "1"]
+        # Intel QSV (QuickSync on 13th Gen Intel Core i5)
+        elif "h264_qsv" in out:
+            print("[ClipCutter] Found Intel GPU! Engaging QuickSync (QSV) hardware acceleration.")
+            return "h264_qsv", ["-preset", "veryfast", "-q", "23"]
         # AMD AMF
         elif "h264_amf" in out:
-            print("[ClipCutter] 🚀 Found AMD GPU! Using AMF acceleration.")
+            print("[ClipCutter] Found AMD GPU! Engaging AMF hardware acceleration.")
             return "h264_amf", ["-quality", "speed", "-rc", "cqp", "-qp_i", "23"]
-        # Intel QSV
-        elif "h264_qsv" in out:
-            print("[ClipCutter] 🚀 Found Intel GPU! Using QSV acceleration.")
-            return "h264_qsv", ["-preset", "faster", "-q", "23"]
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[ClipCutter] Hardware probe warning: {e}")
         
-    print("[ClipCutter] 🐢 No compatible GPU found. Using CPU fallback (libx264).")
-    return "libx264", ["-preset", "veryfast", "-crf", "23", "-threads", "0"]
+    print("[ClipCutter] Using multi-threaded CPU processing across all cores (libx264 ultrafast).")
+    return "libx264", ["-preset", "ultrafast", "-crf", "22", "-threads", "0"]
 
 # Channel watermark text — buyers should change this to their channel name
 WATERMARK_TEXT = "@FinanceClips"
@@ -207,8 +207,8 @@ def cut_and_format_clip(
         
         filter_complex = (
             "[0:v]setpts=PTS/1.1,"
-            "scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[top]; "
-            "[1:v]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[bottom]; "
+            "scale=1080:960:force_original_aspect_ratio=increase:flags=fast_bilinear,crop=1080:960[top]; "
+            "[1:v]scale=1080:960:force_original_aspect_ratio=increase:flags=fast_bilinear,crop=1080:960[bottom]; "
             "[top][bottom]vstack=inputs=2[merged]; "
             "[merged]eq=contrast=1.02:saturation=1.04,"
             f"drawtext=text='{safe_caption}':fontsize=38:fontcolor=white:borderw=2:bordercolor=black:x=(w-text_w)/2:y=(h/2)-text_h-20:font=Arial Bold:box=1:boxcolor=black@0.55:boxborderw=14:fix_bounds=1,"
@@ -218,12 +218,15 @@ def cut_and_format_clip(
         
         cmd = [
             FFMPEG, "-y",
+            "-threads", "0",
             "-ss", str(start_sec), "-t", str(duration), "-i", video_path,
             "-stream_loop", "-1", "-ss", str(broll_start), "-t", str(duration), "-i", broll_path,
             "-filter_complex", filter_complex,
             "-map", "[v_out]",
             "-map", "0:a",
             "-af", "atempo=1.1",
+            "-r", "60",
+            "-pix_fmt", "yuv420p",
             "-c:v", encoder, *encoder_args,
             "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
             output_path,
@@ -232,8 +235,8 @@ def cut_and_format_clip(
         # Standard Cinematic Blur Mode
         filter_complex = (
             "[0:v]setpts=PTS/1.1,split=2[bg][fg]; "
-            "[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,scale=108:192,scale=1080:1920:flags=bilinear,eq=brightness=-0.15[bg_blurred]; "
-            "[fg]scale=1080:1920:force_original_aspect_ratio=decrease,zoompan=z='min(zoom+0.0015,1.15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920[fg_zoomed]; "
+            "[bg]scale=1080:1920:force_original_aspect_ratio=increase:flags=fast_bilinear,crop=1080:1920,scale=108:192:flags=fast_bilinear,scale=1080:1920:flags=fast_bilinear,eq=brightness=-0.15[bg_blurred]; "
+            "[fg]scale=1080:1920:force_original_aspect_ratio=decrease:flags=fast_bilinear,zoompan=z='min(zoom+0.0015,1.15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920[fg_zoomed]; "
             "[bg_blurred][fg_zoomed]overlay=(W-w)/2:(H-h)/2[merged]; "
             "[merged]eq=contrast=1.02:saturation=1.04,"
             f"drawtext=text='{safe_caption}':fontsize=38:fontcolor=white:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-text_h-350:font=Arial Bold:box=1:boxcolor=black@0.55:boxborderw=14:fix_bounds=1,"
@@ -243,11 +246,14 @@ def cut_and_format_clip(
         
         cmd = [
             FFMPEG, "-y",
+            "-threads", "0",
             "-ss", str(start_sec), "-t", str(duration), "-i", video_path,
             "-filter_complex", filter_complex,
             "-map", "[v_out]",
             "-map", "0:a",
             "-af", "atempo=1.1",
+            "-r", "60",
+            "-pix_fmt", "yuv420p",
             "-c:v", encoder, *encoder_args,
             "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
             output_path,
@@ -282,28 +288,53 @@ def cut_multipart_clips(
 ) -> list[str]:
     """
     Cuts a longer segment into multiple parts (Part 1, Part 2, etc.)
+    Uses thread pool to render parts concurrently across all CPU threads and GPU.
     Returns a list of paths to the generated clips.
     """
     clip_paths = []
     total_duration = end_sec - start_sec
     part_duration = total_duration / num_parts
 
-    for i in range(num_parts):
-        part_start = start_sec + int(i * part_duration)
-        part_end = start_sec + int((i + 1) * part_duration)
-        
-        # Ensure we don't exceed the 56s cap per part
-        if part_end - part_start > 56:
-            part_end = part_start + 56
+    if num_parts > 1:
+        import concurrent.futures
+        tasks = []
+        for i in range(num_parts):
+            part_start = start_sec + int(i * part_duration)
+            part_end = start_sec + int((i + 1) * part_duration)
+            if part_end - part_start > 56:
+                part_end = part_start + 56
 
-        part_caption = f"{caption} (Part {i+1})" if num_parts > 1 else caption
-        out_name = f"clip_{int(time.time())}_pt{i+1}.mp4"
+            part_caption = f"{caption} (Part {i+1})"
+            out_name = f"clip_{int(time.time())}_pt{i+1}.mp4"
+            tasks.append((part_start, part_end, part_caption, out_name))
 
+        print(f"[ClipCutter] ⚡ Parallel rendering {num_parts} parts concurrently across CPU/GPU...")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(num_parts, 3)) as executor:
+            future_to_task = {
+                executor.submit(
+                    cut_and_format_clip,
+                    video_path=video_path,
+                    start_sec=p_start,
+                    end_sec=p_end,
+                    caption=p_caption,
+                    output_filename=p_out,
+                    watermark=watermark,
+                    sub_path=sub_path,
+                    broll_path=broll_path
+                ): (p_start, p_caption)
+                for p_start, p_end, p_caption, p_out in tasks
+            }
+            for future in concurrent.futures.as_completed(future_to_task):
+                res = future.result()
+                if res:
+                    clip_paths.append(res)
+    else:
+        out_name = f"clip_{int(time.time())}.mp4"
         path = cut_and_format_clip(
             video_path=video_path,
-            start_sec=part_start,
-            end_sec=part_end,
-            caption=part_caption,
+            start_sec=start_sec,
+            end_sec=min(start_sec + 56, end_sec),
+            caption=caption,
             output_filename=out_name,
             watermark=watermark,
             sub_path=sub_path,

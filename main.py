@@ -185,6 +185,62 @@ async def reset_analytics(request: Request):
             raise HTTPException(status_code=500, detail=str(e))
     return {"status": "error", "message": "No database connection"}
 
+@app.post("/api/v1/analytics/refresh-views")
+async def refresh_views(request: Request):
+    """Fetch real live view counts from YouTube Data API and update the clips table."""
+    import httpx
+    user_id = request.cookies.get("user_id", "demo_user_123")
+    if not supabase:
+        return {"status": "error", "message": "No database"}
+    try:
+        res = supabase.table("clips").select("id, youtube_url").eq("user_id", user_id).execute()
+        clips = res.data or []
+        if not clips:
+            return {"status": "ok", "updated": 0}
+
+        # Extract YouTube video IDs from URLs like https://youtube.com/shorts/VIDEO_ID
+        video_ids = []
+        id_map = {}
+        for clip in clips:
+            url = clip.get("youtube_url", "")
+            if not url:
+                continue
+            vid = url.rstrip("/").split("/")[-1]
+            if vid:
+                video_ids.append(vid)
+                id_map[vid] = clip["id"]
+
+        if not video_ids:
+            return {"status": "ok", "updated": 0}
+
+        YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
+        if not YOUTUBE_API_KEY:
+            return {"status": "error", "message": "YOUTUBE_API_KEY not set on server"}
+
+        params = {
+            "part": "statistics",
+            "id": ",".join(video_ids),
+            "key": YOUTUBE_API_KEY,
+        }
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get("https://www.googleapis.com/youtube/v3/videos", params=params)
+            r.raise_for_status()
+            data = r.json()
+
+        updated = 0
+        for item in data.get("items", []):
+            vid_id = item["id"]
+            views = int(item.get("statistics", {}).get("viewCount", 0))
+            row_id = id_map.get(vid_id)
+            if row_id:
+                supabase.table("clips").update({"views": views}).eq("id", row_id).execute()
+                updated += 1
+
+        return {"status": "ok", "updated": updated}
+    except Exception as e:
+        print(f"refresh-views error: {e}")
+        return {"status": "error", "message": str(e)}
+
 @app.get("/api/v1/worker/version")
 async def get_worker_version():
     """Returns the latest worker version so the client can auto-update."""

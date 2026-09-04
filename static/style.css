@@ -1017,14 +1017,34 @@ body { overflow: hidden; }
   min-height: 65px;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  padding: 0 36px;
+  justify-content: space-between;
+  padding: 0 clamp(16px, 3vw, 36px);
   border-bottom: 1px solid rgba(255,255,255,0.08);
   background: rgba(8,8,8,0.85);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   gap: 12px;
   flex-shrink: 0;
+  z-index: 50;
+}
+
+.mobile-logo-wrap {
+  display: none;
+  align-items: center;
+  gap: 8px;
+}
+.mobile-logo-text {
+  font-size: 17px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: -0.4px;
+}
+
+.top-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
 }
 
 .top-header .free-tier-badge { display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,0.05); border: 1px solid var(--border); border-radius: 20px; padding: 6px 14px; font-size: 13px; color: var(--text-2); white-space: nowrap; }
@@ -1329,4 +1349,333 @@ body { overflow: hidden; }
   background: rgba(255,255,255,0.08);
   padding: 3px 8px;
   border-radius: 10px;
+}
+
+/* ======================================================
+   IPHONE (120Hz PROMOTION) & RESPONSIVE 1920x1080 / SMALL SCREEN FIXES
+   ====================================================== */
+
+/* ── 120Hz Hardware Accelerated Smooth Touch & Scrolling ── */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body,
+.tab-content,
+.content-area,
+.chat-window,
+.analytics-layout,
+.autopost-layout {
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+  touch-action: pan-y pinch-zoom;
+}
+
+/* Force GPU composite layers for 120 FPS high-refresh-rate rendering */
+.tab-content,
+.chat-window,
+.glass-card,
+.clip-card,
+.btn-generate,
+.btn-generate-lg,
+.mobile-bottom-nav {
+  transform: translate3d(0, 0, 0);
+  -webkit-transform: translate3d(0, 0, 0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+/* Fast tap response (0ms delay) on iPhone iOS Safari */
+button,
+a,
+input,
+.mobile-nav-btn,
+.sidebar-btn {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ── 1920x1080 & Small / Shortened Desktop Displays ── */
+@media (min-width: 901px) {
+  .generate-layout {
+    display: flex;
+    gap: clamp(20px, 2.5vw, 40px);
+    padding: clamp(20px, 2.5vw, 40px) clamp(24px, 3.5vw, 60px);
+    max-width: 1440px;
+    margin: 0 auto;
+    width: 100%;
+    min-height: 0;
+  }
+
+  .hero-title {
+    font-size: clamp(30px, 3.2vw, 46px);
+    line-height: 1.15;
+    margin-bottom: 12px;
+  }
+
+  .hero-subtitle {
+    font-size: clamp(14px, 1.1vw, 16px);
+    max-width: 520px;
+  }
+}
+
+/* Compact adjustments for short vertical screen heights (common on 1080p laptops with Windows scaling) */
+@media (max-height: 850px) and (min-width: 901px) {
+  .top-header {
+    height: 54px;
+    min-height: 54px;
+  }
+
+  .sidebar {
+    padding: 16px 12px;
+    gap: 1px;
+  }
+
+  .sidebar-logo {
+    padding: 4px 6px 16px 6px;
+  }
+
+  .sidebar-btn {
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+
+  .generate-layout {
+    padding: 16px 32px;
+    gap: 24px;
+  }
+
+  .hero-section {
+    gap: 20px;
+  }
+
+  .hero-title {
+    font-size: 32px;
+    margin-bottom: 8px;
+  }
+
+  .main-input-card {
+    padding: 20px;
+    gap: 12px;
+  }
+
+  .activity-sidebar {
+    height: calc(100vh - 100px);
+  }
+}
+
+/* ── iPhone & Mobile Screen Responsive Layout (≤ 900px) ── */
+@media (max-width: 900px) {
+  body {
+    overflow: auto;
+    overflow-x: hidden;
+    height: 100%;
+    min-height: 100vh;
+    min-height: -webkit-fill-available;
+  }
+
+  .app-layout {
+    display: block;
+    width: 100%;
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
+  /* Hide Desktop Sidebar on iPhone / Mobile */
+  .sidebar {
+    display: none !important;
+  }
+
+  /* Show Brand in Mobile Header */
+  .mobile-logo-wrap {
+    display: flex;
+  }
+
+  .main-wrapper {
+    width: 100%;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: visible;
+  }
+
+  .top-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    padding: 0 16px;
+    padding-top: env(safe-area-inset-top, 0px);
+    height: calc(56px + env(safe-area-inset-top, 0px));
+    min-height: calc(56px + env(safe-area-inset-top, 0px));
+  }
+
+  .content-area {
+    overflow: visible;
+    flex: 1;
+  }
+
+  .tab-content {
+    overflow: visible;
+    padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Stacked Mobile Studio Layout */
+  .generate-layout {
+    display: flex;
+    flex-direction: column;
+    padding: 18px 16px;
+    gap: 24px;
+    max-width: 100%;
+  }
+
+  .hero-section {
+    max-width: 100%;
+    gap: 20px;
+  }
+
+  .hero-title {
+    font-size: 28px;
+    letter-spacing: -0.8px;
+    margin-bottom: 8px;
+  }
+
+  .hero-subtitle {
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .main-input-card {
+    padding: 18px 16px;
+    gap: 14px;
+  }
+
+  .input-row-lg {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .niche-input-lg {
+    width: 100%;
+    padding: 14px 16px;
+    font-size: 15px;
+  }
+
+  .btn-generate-lg {
+    width: 100%;
+    padding: 14px 20px;
+    justify-content: center;
+    font-size: 15px;
+  }
+
+  .activity-sidebar {
+    width: 100%;
+    height: auto;
+    position: static;
+    max-height: 480px;
+    border-radius: 14px;
+  }
+
+  .analytics-layout,
+  .autopost-layout {
+    padding: 20px 16px;
+  }
+
+  .stat-cards {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .stat-card {
+    padding: 18px;
+  }
+
+  .stat-value {
+    font-size: 28px;
+  }
+
+  #videos-gallery-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 14px !important;
+  }
+}
+
+/* Extra small screens (iPhone SE, iPhone mini ≤ 480px) */
+@media (max-width: 480px) {
+  #videos-gallery-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .btn-connect span {
+    display: none;
+  }
+
+  .hero-title {
+    font-size: 24px;
+  }
+}
+
+/* ── iPhone Mobile Bottom Navigation Bar ── */
+.mobile-bottom-nav {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .mobile-bottom-nav {
+    display: flex;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: calc(60px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    background: rgba(14, 14, 14, 0.94);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border-top: 1px solid rgba(255, 255, 255, 0.09);
+    z-index: 999;
+    justify-content: space-around;
+    align-items: center;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.5);
+  }
+
+  .mobile-nav-btn {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    background: transparent;
+    border: none;
+    color: #737373;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: var(--font-sans);
+    padding: 6px 0;
+    cursor: pointer;
+    transition: color 0.15s ease, transform 0.1s ease;
+  }
+
+  .mobile-nav-btn svg {
+    width: 20px;
+    height: 20px;
+    stroke-width: 2;
+    transition: transform 0.15s ease;
+  }
+
+  .mobile-nav-btn:active {
+    transform: scale(0.92);
+  }
+
+  .mobile-nav-btn.active {
+    color: #dc2626;
+  }
+
+  .mobile-nav-btn.active svg {
+    stroke: #dc2626;
+    transform: translateY(-1px);
+  }
 }

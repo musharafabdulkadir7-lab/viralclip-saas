@@ -71,11 +71,14 @@ def download_video_and_subs(url: str, video_id: str) -> dict:
         "no_warnings": True,
         "noplaylist": True,
         "merge_output_format": "mp4",
-        # Speed: use 8 parallel fragment downloads
-        "concurrent_fragment_downloads": 8,
+        # Speed optimizations: parallel chunk streaming & buffer expansion
+        "concurrent_fragment_downloads": 16,
+        "buffersize": 1048576,
+        "http_chunk_size": 10485760,
+        "nocheckcertificate": True,
         "ffmpeg_location": ffmpeg_exe,
-        # Bypass YouTube bot detection by using mobile clients
-        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+        # Fast streaming client profiles
+        "extractor_args": {"youtube": {"player_client": ["android", "ios", "web"]}},
     }
 
     if cookies_file:

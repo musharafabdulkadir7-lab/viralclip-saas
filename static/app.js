@@ -116,15 +116,16 @@ function updateYouTubeUI(connected) {
 function switchTab(tab) {
     // Hide all tab content panels
     document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
-    // Deactivate all sidebar buttons (new layout) AND old nav-tabs (fallback)
-    document.querySelectorAll('.sidebar-btn').forEach(el => el.classList.remove('active'));
-    document.querySelectorAll('.nav-tab').forEach(el => el.classList.remove('active'));
+    // Deactivate all sidebar and mobile navigation buttons
+    document.querySelectorAll('.sidebar-btn, .nav-tab, .mobile-nav-btn').forEach(el => el.classList.remove('active'));
     // Show selected tab content
     const content = document.getElementById('tab-content-' + tab);
     if (content) content.classList.remove('hidden');
-    // Activate the correct sidebar button
+    // Activate the correct buttons
     const btn = document.getElementById('tab-' + tab);
     if (btn) btn.classList.add('active');
+    const mBtn = document.getElementById('m-tab-' + tab);
+    if (mBtn) mBtn.classList.add('active');
     if (tab === 'analytics') loadAnalytics();
     if (tab === 'autopost') loadAutoPostSettings();
 }
