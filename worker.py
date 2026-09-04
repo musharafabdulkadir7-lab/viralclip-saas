@@ -178,9 +178,15 @@ def run_clip_pipeline(niche: str, user_id: str, job_id: str, is_free_tier: bool 
                 user_id=user_id)
             return
 
+        def on_upload_progress(upload_pct):
+            # Scale upload progress from 85% to 98%
+            mapped_pct = int(85 + (upload_pct * 0.13))
+            update_job_status(job_id, "running", mapped_pct, f"Uploading Short to YouTube ({upload_pct}%)...", user_id=user_id)
+
         upload_res = youtube_uploader.upload_video_to_youtube(
             final_clip, title=title, description=desc,
-            tags=tags, creds_dict=creds_dict
+            tags=tags, creds_dict=creds_dict,
+            progress_callback=on_upload_progress
         )
 
         if upload_res.get("status") == "success":

@@ -42,7 +42,7 @@ def get_authenticated_service(creds_dict):
             
     return build('youtube', 'v3', credentials=creds)
 
-def upload_video_to_youtube(video_path, title, description, tags, creds_dict):
+def upload_video_to_youtube(video_path, title, description, tags, creds_dict, progress_callback=None):
     """
     Uploads a video to YouTube using the authenticated service.
     """
@@ -71,8 +71,10 @@ def upload_video_to_youtube(video_path, title, description, tags, creds_dict):
         }
     }
     
-    # Use 4MB chunks for resumable upload (handles network interruptions)
-    CHUNK_SIZE = 4 * 1024 * 1024
+    # For YouTube Shorts (typically 15MB - 35MB), 4MB chunks force 5-10 roundtrip HTTP requests.
+    # Increasing CHUNK_SIZE to 16MB reduces roundtrips to 1-2 requests, significantly speeding up uploads.
+    # If progress_callback is provided, update UI progress in real time.
+    CHUNK_SIZE = 16 * 1024 * 1024
     media_file = MediaFileUpload(video_path, chunksize=CHUNK_SIZE, resumable=True)
     request = youtube.videos().insert(
         part=','.join(body.keys()),
@@ -80,7 +82,7 @@ def upload_video_to_youtube(video_path, title, description, tags, creds_dict):
         media_body=media_file
     )
 
-    print("Uploading file in chunks...")
+    print("Uploading file in accelerated chunks...")
     response = None
     retries = 0
     max_retries = 5
@@ -90,6 +92,11 @@ def upload_video_to_youtube(video_path, title, description, tags, creds_dict):
             if status:
                 pct = int(status.progress() * 100)
                 print(f"  Upload progress: {pct}%")
+                if progress_callback:
+                    try:
+                        progress_callback(pct)
+                    except Exception:
+                        pass
         except Exception as e:
             retries += 1
             if retries > max_retries:
@@ -97,7 +104,7 @@ def upload_video_to_youtube(video_path, title, description, tags, creds_dict):
                 return {"error": str(e)}
             print(f"  Connection error (attempt {retries}/{max_retries}), retrying...")
             import time
-            time.sleep(3 * retries)  # back-off: 3s, 6s, 9s...
+            time.sleep(2 * retries)
 
     print(f"--- YOUTUBE UPLOAD COMPLETE ---")
     return {
