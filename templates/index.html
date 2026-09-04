@@ -138,6 +138,34 @@
                         </button>
                     </div>
 
+                    <!-- Trending Niche Quick-Picks -->
+                    <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; align-items:center;">
+                        <span style="font-size:12px; font-weight:600; color:var(--text-3); text-transform:uppercase; letter-spacing:0.05em;">Trending:</span>
+                        <button type="button" class="niche-pill" onclick="selectNichePreset('motivation', this)" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); color:#fff; border-radius:20px; padding:4px 12px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.15s;">🔥 Motivation</button>
+                        <button type="button" class="niche-pill" onclick="selectNichePreset('finance', this)" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); color:#fff; border-radius:20px; padding:4px 12px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.15s;">💰 Finance</button>
+                        <button type="button" class="niche-pill" onclick="selectNichePreset('mrbeast', this)" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); color:#fff; border-radius:20px; padding:4px 12px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.15s;">⚡ MrBeast</button>
+                        <button type="button" class="niche-pill" onclick="selectNichePreset('gaming', this)" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); color:#fff; border-radius:20px; padding:4px 12px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.15s;">🎮 Gaming</button>
+                        <button type="button" class="niche-pill" onclick="selectNichePreset('ai tech', this)" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); color:#fff; border-radius:20px; padding:4px 12px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.15s;">🤖 AI & Tech</button>
+                    </div>
+
+                    <!-- Video Style & Format Customizer -->
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-top:14px; padding-top:14px; border-top:1px solid rgba(255,255,255,0.06);">
+                        <div>
+                            <label style="font-size:11.5px; font-weight:700; color:var(--text-3); text-transform:uppercase; letter-spacing:0.06em; display:block; margin-bottom:6px;">Visual Layout</label>
+                            <select id="studio-layout-select" class="niche-input-lg" style="height:38px; font-size:13px; padding:6px 10px; background:var(--surface-2); border-radius:8px; border:1px solid var(--border);">
+                                <option value="split_screen" selected>🎮 Split-Screen (Viral GTA Parkour B-Roll)</option>
+                                <option value="cinematic_blur">🎬 Cinematic Center Focus (Dynamic Blur)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="font-size:11.5px; font-weight:700; color:var(--text-3); text-transform:uppercase; letter-spacing:0.06em; display:block; margin-bottom:6px;">Subtitle Styling</label>
+                            <select id="studio-subtitle-select" class="niche-input-lg" style="height:38px; font-size:13px; padding:6px 10px; background:var(--surface-2); border-radius:8px; border:1px solid var(--border);">
+                                <option value="hormozi" selected>⚡ Alex Hormozi (Bold Impact + Power Emojis)</option>
+                                <option value="clean_minimal">✨ Clean Modern (High-Readability Sans)</option>
+                            </select>
+                        </div>
+                    </div>
+
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.06);">
                         <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text-2); cursor:pointer;">
                             <input type="checkbox" id="studio-autopost-toggle" checked style="accent-color:#2563eb; width:15px; height:15px;">
@@ -470,7 +498,7 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="/static/app.js?v=101"></script>
+<script src="/static/app.js?v=102"></script>
 
 <!-- ── Brand Kit Modal ───────────────────────────────── -->
 <div id="brand-modal" class="brand-modal hidden">

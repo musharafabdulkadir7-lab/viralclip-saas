@@ -7,13 +7,25 @@ import threading
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
+# Immediately hide console window on Windows if spawned with one
+if sys.platform == "win32":
+    try:
+        import ctypes
+        kernel32 = ctypes.WinDLL("kernel32")
+        user32 = ctypes.WinDLL("user32")
+        hWnd = kernel32.GetConsoleWindow()
+        if hWnd:
+            user32.ShowWindow(hWnd, 0) # SW_HIDE
+    except Exception:
+        pass
+
 # Ensure pystray and pillow are available
 try:
     import pystray
     from PIL import Image, ImageDraw
     import winreg as reg
 except ImportError:
-    subprocess.run([sys.executable, "-m", "pip", "install", "pystray", "Pillow"], check=True)
+    subprocess.run([sys.executable, "-m", "pip", "install", "pystray", "Pillow"], check=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     import pystray
     from PIL import Image, ImageDraw
     import winreg as reg
@@ -113,7 +125,7 @@ def update_yt_dlp():
             if sys.platform != "win32":
                 os.chmod(yt_dlp_exe, 0o755)
         else:
-            subprocess.run([str(yt_dlp_exe), "-U"], check=True, capture_output=True)
+            subprocess.run([str(yt_dlp_exe), "-U"], check=True, capture_output=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         print("yt-dlp is up to date!")
     except Exception as e:
         print(f"Failed to setup yt-dlp: {e}")
@@ -146,11 +158,13 @@ def run_worker_loop():
                     job_user_id = job.get("user_id", USER_ID)
                     is_free_tier = job.get("is_free_tier", False)
                     auto_upload = job.get("auto_upload", True)
-                    print(f"\n[!] Picked up new job: {job_id} (Niche: {niche}, User: {job_user_id}, Free Tier: {is_free_tier}, Auto Upload: {auto_upload})")
+                    layout = job.get("layout", "split_screen")
+                    subtitle_style = job.get("subtitle_style", "hormozi")
+                    print(f"\n[!] Picked up new job: {job_id} (Niche: {niche}, User: {job_user_id}, Layout: {layout}, Subtitles: {subtitle_style}, Free Tier: {is_free_tier}, Auto Upload: {auto_upload})")
                     
                     try:
                         # Run the heavy pipeline synchronously
-                        run_clip_pipeline(niche, job_user_id, job_id, is_free_tier, auto_upload=auto_upload)
+                        run_clip_pipeline(niche, job_user_id, job_id, is_free_tier, auto_upload=auto_upload, layout=layout, subtitle_style=subtitle_style)
                     except Exception as pipeline_err:
                         print(f"Pipeline error: {pipeline_err}")
                         requests.post(f"{API_BASE_URL}/api/v1/worker/complete", json={

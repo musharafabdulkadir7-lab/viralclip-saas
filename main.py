@@ -157,6 +157,8 @@ templates = Jinja2Templates(directory=BASE_DIR / "templates")
 class ClipRequest(BaseModel):
     niche: str
     auto_upload: bool = True
+    layout: str = "split_screen"
+    subtitle_style: str = "hormozi"
 
 class PublishDraftRequest(BaseModel):
     clip_id: str
@@ -399,9 +401,11 @@ async def generate_clip(payload: ClipRequest, request: Request):
             "niche": payload.niche,
             "user_id": user_id,
             "is_free_tier": user.get("license") == "free_tier",
-            "auto_upload": payload.auto_upload
+            "auto_upload": payload.auto_upload,
+            "layout": payload.layout,
+            "subtitle_style": payload.subtitle_style
         }))
-        print(f"[Queue] Job {job_id} pushed to worker_queue:{user_id} (auto_upload={payload.auto_upload})")
+        print(f"[Queue] Job {job_id} pushed to worker_queue:{user_id} (auto_upload={payload.auto_upload}, layout={payload.layout}, style={payload.subtitle_style})")
     else:
         print("[Queue] WARNING: redis_client is None — job not queued!")
 

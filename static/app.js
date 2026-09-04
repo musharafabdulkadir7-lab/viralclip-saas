@@ -620,6 +620,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
+// ─── Niche Presets ─────────────────────────────────────────────────────────────
+function selectNichePreset(nicheName, btnEl) {
+    const input = document.getElementById('niche-input');
+    if (input) input.value = nicheName;
+    document.querySelectorAll('.niche-pill').forEach(btn => {
+        btn.style.borderColor = 'rgba(255,255,255,0.12)';
+        btn.style.background = 'rgba(255,255,255,0.06)';
+    });
+    if (btnEl) {
+        btnEl.style.borderColor = 'var(--blue)';
+        btnEl.style.background = 'rgba(37,99,235,0.25)';
+    }
+}
+
 // ─── Generate Button ──────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     checkWorkerHeartbeat(); // initial check
@@ -645,6 +659,9 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        const layout = document.getElementById('studio-layout-select')?.value || 'split_screen';
+        const subtitleStyle = document.getElementById('studio-subtitle-select')?.value || 'hormozi';
+
         runBtn.disabled = true;
         runBtn.textContent = 'Running...';
 
@@ -652,7 +669,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const res = await fetch('/api/v1/generate-clip', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ niche, auto_upload: autoUpload })
+                body: JSON.stringify({ 
+                    niche, 
+                    auto_upload: autoUpload,
+                    layout: layout,
+                    subtitle_style: subtitleStyle
+                })
             });
 
             if (res.status === 402) {

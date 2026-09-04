@@ -84,7 +84,7 @@ def format_ass_time(sec):
     s = sec % 60
     return f"{h}:{m:02d}:{s:05.2f}"
 
-def generate_ass_subtitle(vtt_path: str, start_sec: int, duration: int, output_ass: str):
+def generate_ass_subtitle(vtt_path: str, start_sec: int, duration: int, output_ass: str, subtitle_style: str = "hormozi"):
     try:
         with open(vtt_path, 'r', encoding='utf-8') as f:
             content = f.read()
@@ -92,15 +92,21 @@ def generate_ass_subtitle(vtt_path: str, start_sec: int, duration: int, output_a
         print(f"Error reading VTT: {e}")
         return False
         
-    ass_header = '''[Script Info]
+    is_clean = (subtitle_style == "clean_minimal")
+    font_name = "Arial" if is_clean else "Impact"
+    font_size = "75" if is_clean else "95"
+    margin_v = "450" if is_clean else "550"
+    outline_w = "3" if is_clean else "6"
+
+    ass_header = f'''[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
 PlayResY: 1920
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Hormozi,Arial,85,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,3,2,10,10,750,1
-Style: HormoziWhite,Arial,85,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,3,2,10,10,750,1
+Style: Hormozi,{font_name},{font_size},&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,{outline_w},3,2,10,10,{margin_v},1
+Style: HormoziWhite,{font_name},{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,{outline_w},3,2,10,10,{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -130,12 +136,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if not text:
             continue
             
-        # Highlight power words
-        lower_text = text.lower()
-        for word, (color_code, emoji) in power_words.items():
-            if word in lower_text:
-                # Replace exact word ignoring case with colored version + emoji (re imported at top)
-                text = re.sub(rf'\b({word})\b', rf'{color_code}\1{{\\r}}{emoji}', text, flags=re.IGNORECASE)
+        # Highlight power words if in Hormozi mode
+        if not is_clean:
+            lower_text = text.lower()
+            for word, (color_code, emoji) in power_words.items():
+                if word in lower_text:
+                    text = re.sub(rf'\b({word})\b', rf'{color_code}\1{{\\r}}{emoji}', text, flags=re.IGNORECASE)
 
         style = "Hormozi" if use_yellow else "HormoziWhite"
         use_yellow = not use_yellow
@@ -143,8 +149,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     if not events: return False
     try:
-        # Changed font to Impact for bolder, higher quality Hormozi look, size to 95 to prevent overflow, MarginV to 550
-        ass_header = ass_header.replace("Arial,85", "Impact,95").replace("750,1", "550,1")
         with open(output_ass, 'w', encoding='utf-8') as f:
             f.write(ass_header + '\n'.join(events))
         return True
@@ -160,6 +164,7 @@ def cut_and_format_clip(
     watermark: str = None,
     sub_path: str = None,
     broll_path: str = None,
+    subtitle_style: str = "hormozi",
 ) -> str:
     """
     Cuts a clip, formats it to 9:16 using either a cinematic blurred background OR a split-screen 
@@ -173,7 +178,6 @@ def cut_and_format_clip(
     output_path = os.path.join(OUTPUT_DIR, output_filename)
 
     # YouTube Shorts must be under 60 seconds — cap at 56s to be safe
-    # (1.05x speed means actual duration = duration/1.05, so 56s -> ~53s)
     duration = min(end_sec - start_sec, 56)
 
     # Hard-limit caption to 26 chars so it always fits at 32px on 1080px wide video
@@ -191,7 +195,7 @@ def cut_and_format_clip(
     ass_filter = ""
     if sub_path and os.path.exists(sub_path):
         ass_path = os.path.join(OUTPUT_DIR, f"subs_{int(time.time())}.ass")
-        if generate_ass_subtitle(sub_path, start_sec, duration, ass_path):
+        if generate_ass_subtitle(sub_path, start_sec, duration, ass_path, subtitle_style=subtitle_style):
             # Escape path for ffmpeg filter
             safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
             ass_filter = f",subtitles={safe_ass}"
@@ -284,6 +288,7 @@ def cut_clip(
     watermark: str = None,
     sub_path: str = None,
     broll_path: str = None,
+    subtitle_style: str = "hormozi",
 ) -> str:
     """
     Cuts a single, high-impact standalone viral Short (30-55s).
@@ -304,6 +309,7 @@ def cut_clip(
         watermark=watermark,
         sub_path=sub_path,
         broll_path=broll_path,
+        subtitle_style=subtitle_style,
     )
 
 def cut_multipart_clips(*args, **kwargs) -> list[str]:
