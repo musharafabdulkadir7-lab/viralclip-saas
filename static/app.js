@@ -689,14 +689,20 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Paywall modal buttons
-    document.getElementById('checkout-btn').addEventListener('click', async () => {
-        const res = await fetch('/api/v1/create-checkout-session', { method: 'POST' });
-        const data = await res.json();
-        if (data.checkout_url) window.location.href = data.checkout_url;
-    });
-    document.getElementById('close-modal').addEventListener('click', () => {
-        document.getElementById('paywall-modal').classList.add('hidden');
-    });
+    const checkoutBtn = document.getElementById('checkout-btn');
+    if (checkoutBtn) {
+        checkoutBtn.addEventListener('click', async () => {
+            const res = await fetch('/api/v1/create-checkout-session', { method: 'POST' });
+            const data = await res.json();
+            if (data.checkout_url) window.location.href = data.checkout_url;
+        });
+    }
+    const closeModalBtn = document.getElementById('close-modal');
+    if (closeModalBtn) {
+        closeModalBtn.addEventListener('click', () => {
+            document.getElementById('paywall-modal').classList.add('hidden');
+        });
+    }
 });
 
 // ─── Cancel Job (global scope — called from onclick in HTML) ──────────────────
