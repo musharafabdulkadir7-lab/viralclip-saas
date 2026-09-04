@@ -102,7 +102,11 @@
           <span id="yt-label">Not Connected</span>
         </div>
       </div>
-      <div class="top-header-right">
+      <div class="top-header-right" style="display:flex; align-items:center; gap:10px;">
+        <button onclick="openAccountModal()" id="header-user-btn" class="btn btn-outline" style="font-size:12.5px; padding:7px 12px; display:inline-flex; align-items:center; gap:6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <span id="user-display-label">My Account</span>
+        </button>
         <button onclick="openSubscriptionsModal()" class="btn btn-upgrade" style="display:inline-flex; align-items:center; gap:6px; background:linear-gradient(135deg, #2563eb, #3b82f6); border:none; box-shadow:0 0 16px rgba(59,130,246,0.35); font-weight:700;">
           <span>💎 Subscriptions</span>
         </button>
@@ -501,11 +505,36 @@
         <button onclick="openSubscriptionsModal(); document.getElementById('paywall-modal').classList.add('hidden');" class="btn btn-upgrade" style="width: 100%; padding: 14px; font-size: 16px; font-weight: 700; background: linear-gradient(135deg, var(--blue), #2563eb);">View Subscription Plans</button>
         <button onclick="document.getElementById('paywall-modal').classList.add('hidden');" class="btn-ghost" style="margin-top: 12px;">Maybe later</button>
     </div>
+<!-- ── User Account & Auth Modal ───────────────────────── -->
+<div id="account-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeAccountModal()">
+    <div class="glass-modal modal-box" style="max-width: 440px; padding: 36px; border: 1px solid var(--border); box-shadow: 0 24px 80px rgba(0,0,0,0.7); text-align: left;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px;">
+            <div style="font-size: 22px; font-weight: 800; color: #fff;">Account Profile</div>
+            <button onclick="closeAccountModal()" style="background:none; border:none; color:var(--text-3); font-size:22px; cursor:pointer;">✕</button>
+        </div>
+        <p style="font-size: 13.5px; color: var(--text-2); margin-bottom: 20px; line-height: 1.5;">
+            Link your email to track your generations, manage active subscription licenses, and sync desktop workers.
+        </p>
+        <div style="margin-bottom: 16px;">
+            <label class="input-label" style="font-size: 11px; margin-bottom: 6px; display: block;">Email Address</label>
+            <input type="email" id="account-email-input" class="niche-input-lg" placeholder="your.email@example.com" style="width:100%; font-size:14px; padding:10px 14px;">
+        </div>
+        <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 20px; font-size: 12.5px;">
+            <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+                <span style="color:var(--text-3);">Current Plan:</span>
+                <span id="account-plan-badge" style="color:var(--blue-light); font-weight:700;">Free Tier</span>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+                <span style="color:var(--text-3);">Account ID:</span>
+                <span id="account-user-id" style="color:#fff; font-family:monospace; font-size:11px;">user_...</span>
+            </div>
+        </div>
+        <div style="display:flex; gap:10px;">
+            <button onclick="saveAccountEmail()" class="btn btn-generate" style="flex:1; justify-content:center; padding:11px;">Save Account</button>
+            <button onclick="openSubscriptionsModal(); closeAccountModal();" class="btn btn-outline" style="flex:1; justify-content:center; padding:11px;">Upgrade Plan</button>
+        </div>
+    </div>
 </div>
-
-
-
-<!-- ── In-App Video Player Modal ─────────────────────── -->
 <div id="player-modal" class="modal-overlay hidden" onclick="if(event.target===this)closePlayer()">
     <div style="position:relative; max-width:360px; width:90vw;">
         <button onclick="closePlayer()" style="position:absolute;top:-42px;right:0;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);color:white;width:36px;height:36px;border-radius:50%;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(10px)">✕</button>
@@ -524,7 +553,7 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="/static/app.js?v=103"></script>
+<script src="/static/app.js?v=104"></script>
 
 <!-- ── Brand Kit Modal ───────────────────────────────── -->
 <div id="brand-modal" class="brand-modal hidden">

@@ -606,6 +606,56 @@ function startStatusPolling(jobId) {
     }, 1500);
 }
 
+// ─── Account Modal & Profile Management ─────────────────────────────────────
+async function openAccountModal() {
+    const modal = document.getElementById('account-modal');
+    if (!modal) return;
+    try {
+        const res = await fetch('/api/v1/user/profile');
+        const data = await res.json();
+        const emailInput = document.getElementById('account-email-input');
+        const planBadge = document.getElementById('account-plan-badge');
+        const userIdSpan = document.getElementById('account-user-id');
+        if (emailInput) emailInput.value = data.email || '';
+        if (planBadge) planBadge.textContent = (data.license || 'free_tier').toUpperCase();
+        if (userIdSpan) userIdSpan.textContent = data.user_id || '';
+    } catch (e) {
+        console.error('Failed to load profile:', e);
+    }
+    modal.classList.remove('hidden');
+}
+
+function closeAccountModal() {
+    const modal = document.getElementById('account-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
+async function saveAccountEmail() {
+    const email = document.getElementById('account-email-input')?.value.trim();
+    if (!email || !email.includes('@')) {
+        showToast('Please enter a valid email address', 'error');
+        return;
+    }
+    try {
+        const res = await fetch('/api/v1/user/profile', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: email })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showToast('Account profile linked successfully!');
+            const userLabel = document.getElementById('user-display-label');
+            if (userLabel) userLabel.textContent = email.split('@')[0];
+            closeAccountModal();
+        } else {
+            showToast(data.detail || 'Failed to update email', 'error');
+        }
+    } catch (e) {
+        showToast('Error saving account profile', 'error');
+    }
+}
+
 // ─── On Page Load ─────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
     // Force initialize layout state
@@ -613,6 +663,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // Load saved brand kit settings
     loadBrandKit();
+
+    // Check existing account profile
+    try {
+        const res = await fetch('/api/v1/user/profile');
+        const data = await res.json();
+        if (data.email) {
+            const userLabel = document.getElementById('user-display-label');
+            if (userLabel) userLabel.textContent = data.email.split('@')[0];
+        }
+    } catch (e) {}
 
     // Handle YouTube OAuth redirect
     const urlParams = new URLSearchParams(window.location.search);

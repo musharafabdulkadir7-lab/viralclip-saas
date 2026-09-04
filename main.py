@@ -204,6 +204,35 @@ async def youtube_status(request: Request):
         print(f"Status check error: {e}")
     return {"connected": False}
 
+class UserProfileUpdate(BaseModel):
+    email: str
+
+@app.get("/api/v1/user/profile")
+async def get_user_profile(request: Request):
+    user_id = request.cookies.get("user_id", "demo_user_123")
+    user = get_or_create_user(user_id)
+    return {
+        "user_id": user.get("id", user_id),
+        "email": user.get("email", ""),
+        "license": user.get("license", "free_tier"),
+        "free_clips_used": user.get("free_clips_used", 0)
+    }
+
+@app.post("/api/v1/user/profile")
+async def update_user_profile(payload: UserProfileUpdate, request: Request, response: Response):
+    user_id = request.cookies.get("user_id", "demo_user_123")
+    email = payload.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    
+    if supabase:
+        try:
+            supabase.table("users").update({"email": email}).eq("id", user_id).execute()
+        except Exception as e:
+            print(f"Failed to update email: {e}")
+
+    return {"status": "success", "email": email, "user_id": user_id}
+
 @app.get("/api/v1/analytics")
 async def get_analytics(request: Request):
     user_id = request.cookies.get("user_id", "demo_user_123")
