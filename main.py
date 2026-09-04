@@ -24,6 +24,21 @@ GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "https://viralclip-saas.onrender.com/api/v1/auth/youtube/callback")
 YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+
+# Auto-load from client_secrets.json if available
+_secrets_file = Path(__file__).resolve().parent / "client_secrets.json"
+if os.path.exists(_secrets_file):
+    try:
+        with open(_secrets_file, "r", encoding="utf-8") as _f:
+            _data = json.load(_f)
+            _cfg = _data.get("web") or _data.get("installed") or {}
+            if not GOOGLE_CLIENT_ID:
+                GOOGLE_CLIENT_ID = _cfg.get("client_id", "")
+            if not GOOGLE_CLIENT_SECRET:
+                GOOGLE_CLIENT_SECRET = _cfg.get("client_secret", "")
+    except Exception as _e:
+        print(f"Warning: Could not read client_secrets.json: {_e}")
+
 stripe.api_key = STRIPE_SECRET_KEY
 
 # Clients
@@ -523,13 +538,13 @@ async def analyze_transcript(payload: AnalyzeRequest, user_id: str):
                 t = int(m.group(1))*60 + int(m.group(2))
                 entries.append((t, m.group(3)))
         
-        best_start, best_end = 60, 240
+        best_start, best_end = 60, 110
         if len(entries) >= 4:
-            # Slide a 3-minute window and find max word density
+            # Slide a 45-50 second window and find max word density for a single Short
             best_words = 0
             for i in range(len(entries)):
                 window_start = entries[i][0]
-                window_end = window_start + 180
+                window_end = window_start + 50
                 words = sum(len(e[1].split()) for e in entries if window_start <= e[0] < window_end)
                 if words > best_words:
                     best_words = words
@@ -539,6 +554,7 @@ async def analyze_transcript(payload: AnalyzeRequest, user_id: str):
         return {
             "start_sec": best_start,
             "end_sec": best_end,
+            "num_parts": 1,
             "caption": payload.niche.title()
         }
         
@@ -552,12 +568,13 @@ async def analyze_transcript(payload: AnalyzeRequest, user_id: str):
         prompt = f"""You are an expert YouTube Shorts creator in the '{payload.niche}' niche.
 
 Below is a timestamped transcript from a long-form YouTube video.
-Your job is to find the SINGLE most compelling complete segment — a story, life lesson, or argument that has:
+Your job is to find the SINGLE most compelling complete 30 to 55-second viral moment (1 Part only).
+It must have:
 - A clear beginning (hook/setup)
 - A middle (buildup/details)  
 - A natural ending (conclusion/punchline/resolution)
 
-The segment should ideally be 30 to 55 seconds long (1 Part). Very rarely, if a story is too compelling to cut, you can choose a 60-110 second segment (2 Parts) or 120-165s (3 Parts). 90% of the time, find a single part.
+STRICT REQUIREMENT: Always choose a SINGLE, standalone Short between 30 and 55 seconds (PARTS: 1). Do NOT split into multiple parts. Prioritize punchy single videos.
 
 Rules:
 - Pick where someone is telling a complete story or making a full point — NOT just a random window

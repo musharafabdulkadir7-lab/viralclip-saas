@@ -48,6 +48,15 @@ def download_video_and_subs(url: str, video_id: str) -> dict:
     Returns paths to the video file and subtitle file.
     """
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    existing_mp4 = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp4")
+    existing_subs = glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}*.vtt"))
+    if os.path.exists(existing_mp4) and os.path.getsize(existing_mp4) > 102400:
+        print(f"[Downloader] Using existing cached video: {existing_mp4}")
+        return {
+            "video_path": existing_mp4,
+            "sub_path": existing_subs[0] if existing_subs else None
+        }
+
     output_template = os.path.join(DOWNLOAD_DIR, f"{video_id}.%(ext)s")
     ffmpeg_exe = _get_ffmpeg_exe()
     cookies_file = _write_cookies_file()
@@ -61,8 +70,8 @@ def download_video_and_subs(url: str, video_id: str) -> dict:
         os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
 
     ydl_opts = {
-        # Download at up to 1080p for high-quality Shorts
-        "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best",
+        # Prioritize 720p for rapid downloads (3-5s vs 30s+)
+        "format": "bestvideo[height<=720]+bestaudio/best[height<=720]/best[height<=720]/best",
         "outtmpl": output_template,
         "writeautomaticsub": True,
         "subtitleslangs": ["en"],

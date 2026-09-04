@@ -276,71 +276,38 @@ def cut_and_format_clip(
         return ""
 
 
-def cut_multipart_clips(
+def cut_clip(
     video_path: str,
     start_sec: int,
     end_sec: int,
     caption: str,
-    num_parts: int,
     watermark: str = None,
     sub_path: str = None,
     broll_path: str = None,
-) -> list[str]:
+) -> str:
     """
-    Cuts a longer segment into multiple parts (Part 1, Part 2, etc.)
-    Uses thread pool to render parts concurrently across all CPU threads and GPU.
-    Returns a list of paths to the generated clips.
+    Cuts a single, high-impact standalone viral Short (30-55s).
+    Just like Opus Clip / Munch, prioritizes one complete punchy clip.
     """
-    clip_paths = []
-    total_duration = end_sec - start_sec
-    part_duration = total_duration / num_parts
+    out_name = f"clip_{int(time.time())}.mp4"
+    # Cap duration at 55 seconds for standard Shorts
+    actual_end = min(start_sec + 55, end_sec)
+    if actual_end <= start_sec:
+        actual_end = start_sec + 45
 
-    if num_parts > 1:
-        import concurrent.futures
-        tasks = []
-        for i in range(num_parts):
-            part_start = start_sec + int(i * part_duration)
-            part_end = start_sec + int((i + 1) * part_duration)
-            if part_end - part_start > 56:
-                part_end = part_start + 56
+    return cut_and_format_clip(
+        video_path=video_path,
+        start_sec=start_sec,
+        end_sec=actual_end,
+        caption=caption,
+        output_filename=out_name,
+        watermark=watermark,
+        sub_path=sub_path,
+        broll_path=broll_path,
+    )
 
-            part_caption = f"{caption} (Part {i+1})"
-            out_name = f"clip_{int(time.time())}_pt{i+1}.mp4"
-            tasks.append((part_start, part_end, part_caption, out_name))
-
-        print(f"[ClipCutter] ⚡ Parallel rendering {num_parts} parts concurrently across CPU/GPU...")
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(num_parts, 3)) as executor:
-            future_to_task = {
-                executor.submit(
-                    cut_and_format_clip,
-                    video_path=video_path,
-                    start_sec=p_start,
-                    end_sec=p_end,
-                    caption=p_caption,
-                    output_filename=p_out,
-                    watermark=watermark,
-                    sub_path=sub_path,
-                    broll_path=broll_path
-                ): (p_start, p_caption)
-                for p_start, p_end, p_caption, p_out in tasks
-            }
-            for future in concurrent.futures.as_completed(future_to_task):
-                res = future.result()
-                if res:
-                    clip_paths.append(res)
-    else:
-        out_name = f"clip_{int(time.time())}.mp4"
-        path = cut_and_format_clip(
-            video_path=video_path,
-            start_sec=start_sec,
-            end_sec=min(start_sec + 56, end_sec),
-            caption=caption,
-            output_filename=out_name,
-            watermark=watermark,
-            sub_path=sub_path,
-            broll_path=broll_path,
-        )
-        if path:
-            clip_paths.append(path)
-
-    return clip_paths
+def cut_multipart_clips(*args, **kwargs) -> list[str]:
+    """Single-video compatibility: always produces 1 clean standalone Short."""
+    kwargs.pop("num_parts", None)
+    path = cut_clip(*args, **kwargs)
+    return [path] if path else []

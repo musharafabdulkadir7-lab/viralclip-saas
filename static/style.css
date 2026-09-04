@@ -196,7 +196,11 @@ body {
   background: var(--green-dim);
   color: var(--green);
   border-color: rgba(16,185,129,0.25);
-  pointer-events: none;
+  cursor: pointer;
+}
+.btn-connect.connected:hover {
+  background: rgba(16,185,129,0.18);
+  border-color: rgba(16,185,129,0.4);
 }
 
 .btn-generate {

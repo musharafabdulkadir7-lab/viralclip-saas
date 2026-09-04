@@ -106,12 +106,12 @@ def find_best_segment(sub_path: str, niche: str = "motivation") -> dict:
     that can be split into Part 1, Part 2, Part 3 Shorts.
     Returns {start_sec, end_sec, caption, num_parts}.
     """
-    print("[ClipFinder] Analyzing transcript for best multi-part segment...")
+    print("[ClipFinder] Finding top standalone viral Short moment (30-55s)...")
 
     entries = parse_vtt(sub_path)
     if not entries:
-        print("[ClipFinder] No subtitle entries, using fallback segment.")
-        return {"start_sec": 60, "end_sec": 240, "caption": niche.title(), "num_parts": 3}
+        print("[ClipFinder] No subtitle entries, using default 50s hook.")
+        return {"start_sec": 60, "end_sec": 110, "caption": niche.title(), "num_parts": 1}
 
     transcript = build_transcript_block(entries, max_chars=10000)
 
@@ -120,7 +120,7 @@ def find_best_segment(sub_path: str, niche: str = "motivation") -> dict:
         api_base_url = os.environ.get("API_BASE_URL", "https://viralclip-saas.onrender.com")
         user_id = os.environ.get("CLIPAI_USER_ID", "demo_user_123")
         
-        print("[ClipFinder] Sending transcript to Render backend for AI analysis...")
+        print("[ClipFinder] Analyzing transcript with AI for single viral hook...")
         res = requests.post(f"{api_base_url}/api/v1/worker/analyze-transcript", 
                             json={"transcript": transcript, "niche": niche},
                             params={"user_id": user_id},
@@ -130,38 +130,37 @@ def find_best_segment(sub_path: str, niche: str = "motivation") -> dict:
             data = res.json()
             if "error" in data:
                 print(f"[ClipFinder] Backend AI error: {data['error']}")
-                return {"start_sec": 60, "end_sec": 240, "caption": niche.title(), "num_parts": 3}
+                return {"start_sec": 60, "end_sec": 110, "caption": niche.title(), "num_parts": 1}
                 
             start = data.get("start_sec", 60)
-            end = data.get("end_sec", 240)
+            end = data.get("end_sec", start + 50)
             caption = data.get("caption", niche.title())
-            num_parts = data.get("num_parts", 1)
             
             # Snap to closest VTT boundaries so we don't cut mid-sentence
             snapped_start = start
             snapped_end = end
             
-            # Find the entry closest to the requested start time
             valid_starts = [int(e["start"]) for e in entries]
             if valid_starts:
                 snapped_start = min(valid_starts, key=lambda x: abs(x - start))
             
-            # Find the entry closest to the requested end time (using e["end"])
             valid_ends = [int(e["end"]) for e in entries]
             if valid_ends:
                 snapped_end = min(valid_ends, key=lambda x: abs(x - end))
                 
-            # Fallback sanity check
-            if snapped_end <= snapped_start:
+            # Guarantee single Short duration between 30 and 55 seconds
+            if snapped_end - snapped_start > 55:
                 snapped_end = snapped_start + 55
+            elif snapped_end - snapped_start < 25:
+                snapped_end = snapped_start + 45
                 
             duration = snapped_end - snapped_start
             
-            print(f"[ClipFinder] Gemini Segment: {start}s-{end}s | Snapped to Sentence Boundaries: {snapped_start}s-{snapped_end}s ({duration}s) -> {num_parts} parts")
-            return {"start_sec": snapped_start, "end_sec": snapped_end, "caption": caption, "num_parts": num_parts}
+            print(f"[ClipFinder] Top Viral Hook: {snapped_start}s-{snapped_end}s ({duration}s) | Single Short")
+            return {"start_sec": snapped_start, "end_sec": snapped_end, "caption": caption, "num_parts": 1}
         else:
             print(f"[ClipFinder] Backend returned {res.status_code}")
-            return {"start_sec": 60, "end_sec": 115, "caption": niche.title(), "num_parts": 1}
+            return {"start_sec": 60, "end_sec": 110, "caption": niche.title(), "num_parts": 1}
             
     except Exception as e:
         print(f"[ClipFinder] Request to backend failed: {e}")

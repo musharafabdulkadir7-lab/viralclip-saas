@@ -102,13 +102,21 @@ function updateYouTubeUI(connected) {
     if (connected) {
         dot.className = 'status-dot connected';
         label.textContent = 'YouTube Connected';
-        btn.textContent = '✓ Connected';
+        btn.innerHTML = `
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+          <span>Connected</span>
+        `;
         btn.className = 'btn btn-connect connected';
+        btn.title = 'Connected to YouTube. Click to switch accounts or reconnect.';
     } else {
         dot.className = 'status-dot';
         label.textContent = 'Not Connected';
-        btn.textContent = 'Connect YouTube';
+        btn.innerHTML = `
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.6 3.6 12 3.6 12 3.6s-7.6 0-9.4.5A3 3 0 0 0 .5 6.2 31.5 31.5 0 0 0 0 12a31.5 31.5 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.8.5 9.4.5 9.4.5s7.6 0 9.4-.5a3 3 0 0 0 2.1-2.1A31.5 31.5 0 0 0 24 12a31.5 31.5 0 0 0-.5-5.8zM9.8 15.6V8.4l6.3 3.6-6.3 3.6z"/></svg>
+          <span>Connect YouTube</span>
+        `;
         btn.className = 'btn btn-connect';
+        btn.title = 'Click to connect your YouTube channel';
     }
 }
 
