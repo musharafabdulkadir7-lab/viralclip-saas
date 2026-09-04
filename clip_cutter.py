@@ -37,29 +37,44 @@ FFMPEG = _get_ffmpeg()
 
 def get_best_h264_encoder() -> tuple[str, list[str]]:
     """
-    Probes ffmpeg to find the best available hardware accelerated h264 encoder.
+    Probes ffmpeg and customer hardware (NVIDIA RTX/GTX, Apple Silicon / VideoToolbox, Intel QuickSync, AMD AMF).
+    Dynamically tunes encoding parallelism and throughput to maximum performance based on the user's PC specs.
     Returns a tuple: (encoder_name, [extra_args])
     """
+    import os
+    cpu_cores = os.cpu_count() or 4
     try:
         res = subprocess.run([FFMPEG, "-hide_banner", "-encoders"], capture_output=True, text=True, errors='replace', creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         out = res.stdout
-        # NVIDIA NVENC (Ultra-fast dedicated GPU hardware encoder on RTX 2050)
+
+        # 1. NVIDIA RTX / GTX NVENC (Instant hardware silicon ASIC encoding)
         if "h264_nvenc" in out:
-            print("[ClipCutter] Found NVIDIA GPU! Engaging RTX NVENC hardware acceleration.")
-            return "h264_nvenc", ["-preset", "p1", "-tune", "ll", "-cq", "24", "-spatial-aq", "1"]
-        # Intel QSV (QuickSync on 13th Gen Intel Core i5)
-        elif "h264_qsv" in out:
-            print("[ClipCutter] Found Intel GPU! Engaging QuickSync (QSV) hardware acceleration.")
-            return "h264_qsv", ["-preset", "veryfast", "-q", "23"]
-        # AMD AMF
-        elif "h264_amf" in out:
-            print("[ClipCutter] Found AMD GPU! Engaging AMF hardware acceleration.")
+            # Test if driver supports NVENC
+            test_res = subprocess.run([FFMPEG, "-f", "lavfi", "-i", "color=c=black:s=64x64:d=0.1", "-c:v", "h264_nvenc", "-f", "null", "-"], capture_output=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            if test_res.returncode == 0:
+                print(f"[ClipCutter] [GPU] High-performance NVIDIA GPU detected! Engaging RTX NVENC hardware silicon acceleration with {cpu_cores} parallel feeder threads.")
+                return "h264_nvenc", ["-preset", "p1", "-tune", "ull", "-zerolatency", "1", "-2pass", "0", "-cq", "23", "-spatial-aq", "1", "-threads", str(cpu_cores)]
+
+        # 2. Apple Silicon / macOS VideoToolbox Hardware Engine
+        if "h264_videotoolbox" in out:
+            print(f"[ClipCutter] [GPU] Apple Silicon GPU detected! Engaging VideoToolbox hardware acceleration.")
+            return "h264_videotoolbox", ["-realtime", "1", "-q:v", "65"]
+
+        # 3. Intel QuickSync (QSV)
+        if "h264_qsv" in out:
+            print(f"[ClipCutter] [GPU] Intel GPU detected! Engaging QuickSync (QSV) hardware acceleration.")
+            return "h264_qsv", ["-preset", "veryfast", "-q", "23", "-threads", str(cpu_cores)]
+
+        # 4. AMD AMF
+        if "h264_amf" in out:
+            print(f"[ClipCutter] [GPU] AMD GPU detected! Engaging AMF hardware acceleration.")
             return "h264_amf", ["-quality", "speed", "-rc", "cqp", "-qp_i", "23"]
+
     except Exception as e:
         print(f"[ClipCutter] Hardware probe warning: {e}")
         
-    print("[ClipCutter] Using multi-threaded CPU processing across all cores (libx264 ultrafast).")
-    return "libx264", ["-preset", "ultrafast", "-crf", "22", "-threads", "0"]
+    print(f"[ClipCutter] [CPU] Engaging multi-threaded CPU processing scaling dynamically across all {cpu_cores} cores.")
+    return "libx264", ["-preset", "ultrafast", "-crf", "22", "-threads", str(cpu_cores), "-slice-max-size", "0"]
 
 # Channel watermark text — buyers should change this to their channel name
 WATERMARK_TEXT = "@FinanceClips"
@@ -202,7 +217,9 @@ def cut_and_format_clip(
 
     # ─── Filter Complex ───────────
     # Auto-detect GPU hardware encoder (runs fast, cached per-clip)
+    # Auto-detect GPU hardware encoder and scale threads based on host PC spec
     encoder, encoder_args = get_best_h264_encoder()
+    cpu_threads = str(os.cpu_count() or 4)
 
     if broll_path and os.path.exists(broll_path):
         # Split-Screen Mode (Top: Original, Bottom: B-Roll)
@@ -225,7 +242,7 @@ def cut_and_format_clip(
 
         cmd = [
             FFMPEG, "-y",
-            "-threads", "0",
+            "-threads", cpu_threads,
             "-ss", str(start_sec), "-t", str(duration), "-i", video_path,
             "-stream_loop", "-1", "-ss", str(broll_start), "-t", str(duration), "-i", broll_path,
             "-filter_complex", filter_complex,
@@ -255,7 +272,7 @@ def cut_and_format_clip(
 
         cmd = [
             FFMPEG, "-y",
-            "-threads", "0",
+            "-threads", cpu_threads,
             "-ss", str(start_sec), "-t", str(duration), "-i", video_path,
             "-filter_complex", filter_complex,
             "-map", "[v_out]",
