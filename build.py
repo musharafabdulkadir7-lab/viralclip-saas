@@ -43,6 +43,7 @@ def run_pyinstaller():
     # Collect all the AI pipeline scripts in this directory to bundle explicitly
     agent_scripts = [
         "worker.py",
+        "hot_pipeline.py",
         "video_finder.py",
         "video_downloader.py",
         "clip_finder.py",
