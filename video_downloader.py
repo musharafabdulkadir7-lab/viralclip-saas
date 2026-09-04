@@ -70,8 +70,8 @@ def download_video_and_subs(url: str, video_id: str) -> dict:
         os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
 
     ydl_opts = {
-        # Prioritize 720p for rapid downloads (3-5s vs 30s+)
-        "format": "bestvideo[height<=720]+bestaudio/best[height<=720]/best[height<=720]/best",
+        # Prioritize 720p/480p mp4 for 3-5 second downloads instead of waiting for 1080p
+        "format": "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]/best",
         "outtmpl": output_template,
         "writeautomaticsub": True,
         "subtitleslangs": ["en"],
@@ -82,8 +82,8 @@ def download_video_and_subs(url: str, video_id: str) -> dict:
         "merge_output_format": "mp4",
         # Speed optimizations: parallel chunk streaming & buffer expansion
         "concurrent_fragment_downloads": 16,
-        "buffersize": 1048576,
-        "http_chunk_size": 10485760,
+        "buffersize": 2097152,
+        "http_chunk_size": 20971520,
         "nocheckcertificate": True,
         "ffmpeg_location": ffmpeg_exe,
         # Fast streaming client profiles

@@ -124,6 +124,10 @@ def run_worker_loop():
     
     try:
         from worker import run_clip_pipeline
+        import hot_pipeline
+        # Speculatively warm cache for top niches in the background with zero user wait
+        for default_niche in ["motivation", "finance", "gaming"]:
+            hot_pipeline.trigger_replenish(default_niche, is_free_tier=False)
     except ImportError as e:
         print(f"Failed to load pipeline modules: {e}")
         return
