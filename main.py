@@ -693,8 +693,8 @@ async def create_checkout_session(request: Request, body: CheckoutRequest = None
 
     tiers = {
         "pro": {"name": "ViralClip AI - Pro (Monthly)", "amount": 2900, "mode": "subscription"},
-        "full_version": {"name": "ViralClip AI - Full Version (Lifetime)", "amount": 6900, "mode": "payment"},
-        "lifetime": {"name": "ViralClip AI - Full Version (Lifetime)", "amount": 6900, "mode": "payment"}
+        "full_version": {"name": "ViralClip AI - Full Version (Monthly)", "amount": 4900, "mode": "subscription"},
+        "lifetime": {"name": "ViralClip AI - Full Version (Monthly)", "amount": 4900, "mode": "subscription"}
     }
     selected = tiers.get(tier, tiers["full_version"])
 
