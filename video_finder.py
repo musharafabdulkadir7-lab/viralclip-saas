@@ -203,6 +203,29 @@ def find_viral_video(niche: str = "finance", max_results: int = 15) -> dict:
 
 
 def find_viral_videos(niche: str = "finance", max_results: int = 15) -> list:
+    # ── 0. Handle Direct YouTube URL Input ───────────────────
+    trimmed = niche.strip()
+    if "youtube.com/watch" in trimmed or "youtu.be/" in trimmed or "youtube.com/shorts/" in trimmed:
+        import yt_dlp
+        log(f"[VideoFinder] Direct YouTube URL detected: {trimmed}")
+        try:
+            with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True}) as ydl:
+                info = ydl.extract_info(trimmed, download=False)
+                if info:
+                    vid_id = info.get("id") or "direct_vid"
+                    title = _safe(info.get("title", "Custom YouTube Video"))[:60]
+                    duration = info.get("duration") or 300
+                    view_count = info.get("view_count") or 100000
+                    return [{
+                        "url": trimmed,
+                        "title": title,
+                        "duration": duration,
+                        "view_count": view_count,
+                        "id": vid_id
+                    }]
+        except Exception as e:
+            log(f"[VideoFinder] Failed to inspect direct URL: {e}")
+
     candidates = []
 
     # Prefer YouTube Data API (never gets blocked)
