@@ -75,6 +75,7 @@ def run_pyinstaller():
         sys.executable, "-m", "PyInstaller",
         "--name", "ClipAI_Worker",
         "--onefile",
+        "--noconsole",
         "--add-data", f"{BIN_DIR}{os.pathsep}bin",
     ] + add_data_args + hidden_imports + ["client_worker.py"]
     
