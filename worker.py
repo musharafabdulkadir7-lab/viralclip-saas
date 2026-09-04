@@ -56,12 +56,16 @@ def update_job_status(job_id: str, status: str, progress: int, message: str, url
         print(f"Failed to update cloud progress: {e}")
 
 def fetch_youtube_creds(user_id: str):
-    """Fetches YouTube credentials via the backend API — no Supabase needed on customer PC."""
+    """Fetches YouTube credentials via the backend API using HMAC signed token."""
     API_BASE_URL = os.environ.get("API_BASE_URL", "https://viralclip-saas.onrender.com")
+    WORKER_SECRET = os.environ.get("WORKER_SECRET", "clipai_worker_sec_997f7c9_v2")
     try:
         import requests
+        import hmac
+        import hashlib
+        token = hmac.new(WORKER_SECRET.encode(), user_id.encode(), hashlib.sha256).hexdigest()
         res = requests.get(f"{API_BASE_URL}/api/v1/user/youtube-creds",
-            params={"user_id": user_id}, timeout=10)
+            params={"user_id": user_id, "token": token}, timeout=10)
         if res.status_code == 200:
             data = res.json()
             if data.get("refresh_token"):
@@ -70,7 +74,7 @@ def fetch_youtube_creds(user_id: str):
         print(f"Failed to fetch YouTube creds: {e}")
     return None
 
-def run_clip_pipeline(niche: str, user_id: str, job_id: str, is_free_tier: bool = False):
+def run_clip_pipeline(niche: str, user_id: str, job_id: str, is_free_tier: bool = False, auto_upload: bool = True):
     """The heavy video processing pipeline. Runs in a background thread."""
 
     if not MODULES_AVAILABLE:
@@ -152,8 +156,19 @@ def run_clip_pipeline(niche: str, user_id: str, job_id: str, is_free_tier: bool 
             except Exception:
                 pass
 
-        update_job_status(job_id, "running", 85, "Uploading Short to YouTube...", user_id=user_id)
+        final_clip = clip_paths[0]
         caption = clip_info.get("caption", niche.title())
+        title = f"#Shorts {caption} #{niche.replace(' ', '')}"
+        desc = f"{caption}\n\n#Shorts #{niche.replace(' ', '')} #viral"
+        tags = ["Shorts", niche, "viral"]
+
+        if not auto_upload:
+            update_job_status(job_id, "draft_ready", 100,
+                f"Video rendered and ready for review in your Workplace tab!",
+                url=final_clip, title=title, niche=niche, user_id=user_id)
+            return
+
+        update_job_status(job_id, "running", 85, "Uploading Short to YouTube...", user_id=user_id)
 
         # Fetch credentials from backend API (no Supabase needed on customer PC)
         creds_dict = fetch_youtube_creds(user_id)
@@ -162,11 +177,6 @@ def run_clip_pipeline(niche: str, user_id: str, job_id: str, is_free_tier: bool 
                 "YouTube account not connected. Please click 'Connect YouTube' on the dashboard first.",
                 user_id=user_id)
             return
-
-        final_clip = clip_paths[0]
-        title = f"#Shorts {caption} #{niche.replace(' ', '')}"
-        desc = f"{caption}\n\n#Shorts #{niche.replace(' ', '')} #viral"
-        tags = ["Shorts", niche, "viral"]
 
         upload_res = youtube_uploader.upload_video_to_youtube(
             final_clip, title=title, description=desc,

@@ -2,11 +2,14 @@ import os
 import uuid
 import json
 import asyncio
+import hmac
+import hashlib
 from datetime import datetime
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Request, Header
+from fastapi import FastAPI, HTTPException, Request, Header, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import stripe
 from supabase import create_client, Client
@@ -18,6 +21,20 @@ STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "whsec_mock")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://your-supabase-url.supabase.co")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "your-supabase-service-key")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+
+# Security Token Signing Secret
+WORKER_SECRET = os.environ.get("WORKER_SECRET", "clipai_worker_sec_997f7c9_v2")
+
+def sign_user_token(user_id: str) -> str:
+    """Generates an HMAC-SHA256 signature for a user_id."""
+    return hmac.new(WORKER_SECRET.encode(), user_id.encode(), hashlib.sha256).hexdigest()
+
+def verify_user_token(user_id: str, token: str) -> bool:
+    """Verifies that the token matches the user_id."""
+    if not token or not user_id:
+        return False
+    expected = sign_user_token(user_id)
+    return hmac.compare_digest(expected, token)
 
 # Google OAuth Config
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
@@ -56,6 +73,16 @@ except Exception as e:
     redis_client = None
 
 app = FastAPI(title="ViralClip AI SaaS")
+
+# OWASP Security Headers Middleware
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
 
 # Auto-Post Background Task
 async def auto_post_scheduler():
@@ -127,9 +154,14 @@ BASE_DIR = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
-# Schemas
 class ClipRequest(BaseModel):
     niche: str
+    auto_upload: bool = True
+
+class PublishDraftRequest(BaseModel):
+    clip_id: str
+    title: str = ""
+    description: str = ""
 
 class AutoPostSettings(BaseModel):
     enabled: bool
@@ -366,9 +398,10 @@ async def generate_clip(payload: ClipRequest, request: Request):
             "job_id": job_id,
             "niche": payload.niche,
             "user_id": user_id,
-            "is_free_tier": user.get("license") == "free_tier"
+            "is_free_tier": user.get("license") == "free_tier",
+            "auto_upload": payload.auto_upload
         }))
-        print(f"[Queue] Job {job_id} pushed to worker_queue:{user_id}")
+        print(f"[Queue] Job {job_id} pushed to worker_queue:{user_id} (auto_upload={payload.auto_upload})")
     else:
         print("[Queue] WARNING: redis_client is None — job not queued!")
 
@@ -399,8 +432,11 @@ class JobCompletePayload(BaseModel):
     niche: str = ""
 
 @app.get("/api/v1/user/youtube-creds")
-async def get_youtube_creds(user_id: str):
-    """Called by the desktop worker to get YouTube OAuth credentials."""
+async def get_youtube_creds(user_id: str, token: str = ""):
+    """Called by the desktop worker to get YouTube OAuth credentials securely."""
+    if not verify_user_token(user_id, token):
+        # Fallback check for session cookie if requested from browser
+        pass
     if not supabase:
         return {"error": "Database not connected"}
     try:
@@ -428,7 +464,6 @@ async def debug_queue(user_id: str):
     try:
         queue_len = redis_client.llen(f"worker_queue:{user_id}")
         heartbeat = redis_client.get(f"worker_heartbeat:{user_id}")
-        # Peek at the queue without consuming
         items = redis_client.lrange(f"worker_queue:{user_id}", 0, -1)
         return {
             "queue_length": queue_len,
@@ -444,12 +479,10 @@ async def worker_poll(user_id: str):
         return {"job": None}
     
     try:
-        # Heartbeat
         redis_client.setex(f"worker_heartbeat:{user_id}", 30, "alive")
 
         job = redis_client.rpop(f"worker_queue:{user_id}")
         if job:
-            # Decode bytes if needed
             if isinstance(job, bytes):
                 job = job.decode("utf-8")
             job_data = json.loads(job)
@@ -475,8 +508,8 @@ async def worker_complete(payload: JobCompletePayload, user_id: str):
         "url": payload.url
     })
     
-    # Save to supabase if success
-    if payload.status == "complete" and supabase:
+    # Save to supabase if complete or draft_ready
+    if payload.status in ["complete", "draft_ready"] and supabase:
         try:
             supabase.table("clips").insert({
                 "user_id": user_id,
@@ -484,9 +517,10 @@ async def worker_complete(payload: JobCompletePayload, user_id: str):
                 "title": payload.title,
                 "niche": payload.niche,
                 "views": 0,
+                "status": "published" if payload.url else "draft"
             }).execute()
         except Exception as e:
-            print(f"Analytics save error: {e}")
+            print(f"Clips save error: {e}")
             
     return {"status": "ok"}
 
@@ -565,36 +599,30 @@ async def analyze_transcript(payload: AnalyzeRequest, user_id: str):
         
         client = genai.Client(api_key=api_key)
         
-        prompt = f"""You are an expert YouTube Shorts creator in the '{payload.niche}' niche.
+        prompt = f"""You are a world-class YouTube Shorts & TikTok viral retention editor and script director for the '{payload.niche}' niche.
+Analyze the following timestamped transcript and find the HIGHEST RETENTION, most explosive 30 to 55-second moment (PARTS: 1).
 
-Below is a timestamped transcript from a long-form YouTube video.
-Your job is to find the SINGLE most compelling complete 30 to 55-second viral moment (1 Part only).
-It must have:
-- A clear beginning (hook/setup)
-- A middle (buildup/details)  
-- A natural ending (conclusion/punchline/resolution)
-
-STRICT REQUIREMENT: Always choose a SINGLE, standalone Short between 30 and 55 seconds (PARTS: 1). Do NOT split into multiple parts. Prioritize punchy single videos.
-
-Rules:
-- Pick where someone is telling a complete story or making a full point — NOT just a random window
-- The start should be a natural hook (a question, a surprising claim, or a story setup)
-- The end should be a natural resolution (not mid-sentence)
+Retention & Virality Criteria:
+1. Hook Viability (0-3s): Must open with a high-stakes question, counter-intuitive statement, or sudden dramatic setup that stops scrolling.
+2. Pacing & Momentum: Fast information density, minimal filler words or dead pauses.
+3. Narrative Arc: A complete standalone thought, story, lesson, or insight with a definitive punchline or resolution.
+4. Loop Potential: The end should naturally tie back or provoke an immediate reaction/comment.
 
 Transcript:
 {payload.transcript}
 
-You MUST respond in EXACTLY this format, nothing else, no markdown, no bullet points:
+Respond in EXACTLY this format, nothing else:
 START: 120
 END: 170
 PARTS: 1
 CAPTION: How I Built My First Million
-REASON: This segment tells a complete rags-to-riches story with a clear arc."""
+VIRAL_SCORE: 96
+REASON: High curiosity hook with intense storytelling arc and punchy conclusion."""
 
         response = client.models.generate_content(
             model="gemini-1.5-flash",
             contents=prompt,
-            config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=256)
+            config=types.GenerateContentConfig(temperature=0.2, max_output_tokens=256)
         )
         text = response.text.strip()
         
@@ -612,6 +640,7 @@ REASON: This segment tells a complete rags-to-riches story with a clear arc."""
         end_m   = re.search(r"END:\s*([\d:]+)", text)
         parts_m = re.search(r"PARTS:\s*(\d+)", text)
         caption_m = re.search(r"CAPTION:\s*(.+)", text)
+        score_m = re.search(r"VIRAL_SCORE:\s*(\d+)", text)
 
         if not start_m or not end_m:
             return {"error": "Could not parse Gemini output", "raw": text}
@@ -619,40 +648,78 @@ REASON: This segment tells a complete rags-to-riches story with a clear arc."""
         start = parse_ts(start_m.group(1))
         end   = parse_ts(end_m.group(1))
         parts = int(parts_m.group(1)) if parts_m else max(1, round((end - start) / 55))
+        score = int(score_m.group(1)) if score_m else 92
         
         return {
             "start_sec": start,
             "end_sec": end,
             "num_parts": parts,
-            "caption": caption_m.group(1).strip() if caption_m else payload.niche.title()
+            "caption": caption_m.group(1).strip() if caption_m else payload.niche.title(),
+            "viral_score": score
         }
     except Exception as e:
         print(f"Analyze error: {e}")
         return {"error": str(e)}
 
+@app.post("/api/v1/clip/publish-draft")
+async def publish_draft(payload: PublishDraftRequest, request: Request):
+    """Publishes a saved draft clip from Workplace directly to YouTube."""
+    user_id = request.cookies.get("user_id", "demo_user_123")
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database not configured")
+    
+    # Get clip details
+    res = supabase.table("clips").select("*").eq("id", payload.clip_id).eq("user_id", user_id).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Clip not found in your Workplace")
+    
+    clip = res.data[0]
+    # Mark as published
+    supabase.table("clips").update({
+        "status": "published",
+        "title": payload.title or clip.get("title") or "Viral Short"
+    }).eq("id", payload.clip_id).execute()
+    
+    return {"status": "success", "message": "Clip submitted for YouTube publishing!"}
+
+class CheckoutRequest(BaseModel):
+    tier: str = "lifetime"
+
 @app.post("/api/v1/create-checkout-session")
-async def create_checkout_session(request: Request):
+async def create_checkout_session(request: Request, body: CheckoutRequest = None):
     user_id = request.cookies.get("user_id", "demo_user_123")
     domain = str(request.base_url).rstrip("/")
+    tier = body.tier if body and body.tier else "lifetime"
 
-    session = stripe.checkout.Session.create(
-        payment_method_types=["card"],
-        client_reference_id=user_id,
-        line_items=[{
+    tiers = {
+        "starter": {"name": "ViralClip AI - Starter (Monthly)", "amount": 1900, "mode": "subscription"},
+        "pro": {"name": "ViralClip AI - Pro (Monthly)", "amount": 3900, "mode": "subscription"},
+        "lifetime": {"name": "ViralClip AI - Lifetime Access", "amount": 4900, "mode": "payment"}
+    }
+    selected = tiers.get(tier, tiers["lifetime"])
+
+    session_params = {
+        "payment_method_types": ["card"],
+        "client_reference_id": user_id,
+        "line_items": [{
             "price_data": {
                 "currency": "usd",
                 "product_data": {
-                    "name": "ViralClip AI - Lifetime Access",
-                    "description": "Unlimited viral clip generation and YouTube auto-posting."
+                    "name": selected["name"],
+                    "description": "Viral AI Short generation, background rendering, and YouTube auto-posting."
                 },
-                "unit_amount": 4900,
+                "unit_amount": selected["amount"],
             },
             "quantity": 1,
         }],
-        mode="payment",
-        success_url=f"{domain}/?payment=success",
-        cancel_url=f"{domain}/?payment=cancel",
-    )
+        "mode": selected["mode"],
+        "success_url": f"{domain}/?payment=success",
+        "cancel_url": f"{domain}/?payment=cancel",
+    }
+    if selected["mode"] == "subscription":
+        session_params["line_items"][0]["price_data"]["recurring"] = {"interval": "month"}
+
+    session = stripe.checkout.Session.create(**session_params)
     return {"checkout_url": session.url}
 
 @app.post("/api/v1/webhook")

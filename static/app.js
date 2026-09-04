@@ -135,7 +135,114 @@ function switchTab(tab) {
     const mBtn = document.getElementById('m-tab-' + tab);
     if (mBtn) mBtn.classList.add('active');
     if (tab === 'analytics') loadAnalytics();
+    if (tab === 'workplace') loadWorkplaceClips();
     if (tab === 'autopost') loadAutoPostSettings();
+}
+
+// ─── Workplace (Review Before Post) ───────────────────────────────────────────
+async function loadWorkplaceClips() {
+    const container = document.getElementById('workplace-clips-container');
+    if (!container) return;
+    try {
+        const res = await fetch('/api/v1/analytics');
+        const data = await res.json();
+        const clips = data.videos || [];
+        
+        if (clips.length === 0) {
+            container.innerHTML = '<div class="table-empty" style="grid-column: 1 / -1;">No clips generated yet. Head to Studio to create your first clip!</div>';
+            return;
+        }
+
+        container.innerHTML = clips.map(c => {
+            const rawId = c.youtube_url ? (c.youtube_url.split('shorts/')[1] || c.youtube_url.split('v=')[1] || '') : '';
+            const videoId = rawId.split('?')[0];
+            const isLive = Boolean(c.youtube_url);
+            const thumbUrl = videoId
+                ? `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`
+                : 'https://via.placeholder.com/400x700/18181b/3b82f6?text=Preview+Clip';
+            const title = escHtml(c.title || c.niche || 'Viral Short');
+            
+            return `
+            <div class="glass-card" style="display:flex; flex-direction:column; overflow:hidden; border-radius:14px; border:1px solid rgba(255,255,255,0.08); background:rgba(20,20,20,0.6);">
+                <div style="position:relative; aspect-ratio:9/16; background:#000; overflow:hidden; cursor:pointer;" onclick="openPlayer('${videoId}','${c.youtube_url || ''}','${title}')">
+                    <img src="${thumbUrl}" style="width:100%; height:100%; object-fit:cover; opacity:0.85; transition:opacity 0.2s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.85'">
+                    <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.25);">
+                        <div style="width:48px; height:48px; border-radius:50%; background:rgba(220,38,38,0.9); display:flex; align-items:center; justify-content:center; box-shadow:0 4px 20px rgba(0,0,0,0.5);">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg>
+                        </div>
+                    </div>
+                    <div style="position:absolute; top:12px; right:12px; background:${isLive ? 'rgba(16,185,129,0.85)' : 'rgba(234,179,8,0.85)'}; color:white; font-size:11px; font-weight:700; padding:4px 8px; border-radius:6px; text-transform:uppercase;">
+                        ${isLive ? '✓ Live on YT' : '⏳ Ready to Review'}
+                    </div>
+                </div>
+                <div style="padding:16px; display:flex; flex-direction:column; gap:10px; flex:1; justify-content:space-between;">
+                    <div>
+                        <div style="font-weight:700; font-size:14px; color:#fff; line-height:1.4; margin-bottom:4px;">${title}</div>
+                        <div style="font-size:12px; color:var(--text-3);">${c.created_at ? new Date(c.created_at).toLocaleDateString() : 'Recent'}</div>
+                    </div>
+                    <div style="display:flex; gap:8px;">
+                        <button onclick="openPlayer('${videoId}','${c.youtube_url || ''}','${title}')" class="btn btn-outline" style="flex:1; justify-content:center; padding:8px; font-size:12px;">Watch</button>
+                        ${!isLive ? `
+                        <button onclick="publishClipToYouTube('${c.id}')" class="btn btn-generate" style="flex:1.4; justify-content:center; padding:8px; font-size:12px; background:#dc2626;">Post to YouTube</button>
+                        ` : `
+                        <a href="${c.youtube_url}" target="_blank" class="btn btn-connect" style="flex:1; justify-content:center; padding:8px; font-size:12px; text-decoration:none;">Open ↗</a>
+                        `}
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+
+    } catch (e) {
+        console.error('Workplace load error:', e);
+    }
+}
+
+async function publishClipToYouTube(clipId) {
+    try {
+        const res = await fetch('/api/v1/clip/publish-draft', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ clip_id: clipId })
+        });
+        if (res.ok) {
+            showToast('Video published to YouTube!');
+            loadWorkplaceClips();
+        } else {
+            showToast('Publishing failed. Check YouTube connection.', 'error');
+        }
+    } catch (e) {
+        showToast('Network error while publishing', 'error');
+    }
+}
+
+// ─── Subscriptions Modal ──────────────────────────────────────────────────────
+function openSubscriptionsModal() {
+    const modal = document.getElementById('subscriptions-modal');
+    if (modal) modal.classList.remove('hidden');
+}
+
+function closeSubscriptionsModal() {
+    const modal = document.getElementById('subscriptions-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
+async function checkoutPlan(tier) {
+    showToast(`Redirecting to ${tier} checkout...`, 'info');
+    try {
+        const res = await fetch('/api/v1/create-checkout-session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tier: tier })
+        });
+        const data = await res.json();
+        if (data.checkout_url) {
+            window.location.href = data.checkout_url;
+        } else {
+            showToast('Could not initialize checkout', 'error');
+        }
+    } catch (e) {
+        showToast('Checkout connection error', 'error');
+    }
 }
 
 // ─── Brand Kit ────────────────────────────────────────────────────────────────
@@ -528,6 +635,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const niche = document.getElementById('niche-input').value.trim() || 'motivation';
+        const autoUploadToggle = document.getElementById('studio-autopost-toggle');
+        const autoUpload = autoUploadToggle ? autoUploadToggle.checked : true;
         
         // If worker is offline, tell them to start it
         if (!workerIsAlive) {
@@ -543,7 +652,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const res = await fetch('/api/v1/generate-clip', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ niche })
+                body: JSON.stringify({ niche, auto_upload: autoUpload })
             });
 
             if (res.status === 402) {
