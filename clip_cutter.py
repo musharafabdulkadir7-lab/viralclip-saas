@@ -214,12 +214,15 @@ def cut_and_format_clip(
             "scale=1080:960:force_original_aspect_ratio=increase:flags=fast_bilinear,crop=1080:960[top]; "
             "[1:v]scale=1080:960:force_original_aspect_ratio=increase:flags=fast_bilinear,crop=1080:960[bottom]; "
             "[top][bottom]vstack=inputs=2[merged]; "
-            "[merged]eq=contrast=1.02:saturation=1.04,"
+            "[merged]eq=contrast=1.04:saturation=1.06:gamma=0.98,vignette=PI/5,"
             f"drawtext=text='{safe_caption}':fontsize=38:fontcolor=white:borderw=2:bordercolor=black:x=(w-text_w)/2:y=(h/2)-text_h-20:font=Arial Bold:box=1:boxcolor=black@0.55:boxborderw=14:fix_bounds=1,"
             f"drawtext=text='{safe_watermark}':fontsize=26:fontcolor=white@0.70:borderw=1:bordercolor=black@0.5:x=40:y=80:font=Arial:fix_bounds=1"
             f"{ass_filter}[v_out]"
         )
         
+        # Professional acoustic transform (shifts audio fingerprint while preserving speech naturalness)
+        audio_filter = "asetrate=44100*1.03,aresample=44100,atempo=1.07,equalizer=f=1000:t=q:w=1:g=1.5"
+
         cmd = [
             FFMPEG, "-y",
             "-threads", "0",
@@ -228,7 +231,7 @@ def cut_and_format_clip(
             "-filter_complex", filter_complex,
             "-map", "[v_out]",
             "-map", "0:a",
-            "-af", "atempo=1.1",
+            "-af", audio_filter,
             "-r", "30",
             "-pix_fmt", "yuv420p",
             "-c:v", encoder, *encoder_args,
@@ -242,12 +245,14 @@ def cut_and_format_clip(
             "[bg]scale=1080:1920:force_original_aspect_ratio=increase:flags=fast_bilinear,crop=1080:1920,scale=108:192:flags=fast_bilinear,scale=1080:1920:flags=fast_bilinear,eq=brightness=-0.15[bg_blurred]; "
             "[fg]scale=1080:1920:force_original_aspect_ratio=decrease:flags=fast_bilinear,zoompan=z='min(zoom+0.0015,1.15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30[fg_zoomed]; "
             "[bg_blurred][fg_zoomed]overlay=(W-w)/2:(H-h)/2[merged]; "
-            "[merged]eq=contrast=1.02:saturation=1.04,"
+            "[merged]eq=contrast=1.04:saturation=1.06:gamma=0.98,vignette=PI/5,"
             f"drawtext=text='{safe_caption}':fontsize=38:fontcolor=white:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-text_h-350:font=Arial Bold:box=1:boxcolor=black@0.55:boxborderw=14:fix_bounds=1,"
             f"drawtext=text='{safe_watermark}':fontsize=26:fontcolor=white@0.70:borderw=1:bordercolor=black@0.5:x=40:y=80:font=Arial:fix_bounds=1"
             f"{ass_filter}[v_out]"
         )
         
+        audio_filter = "asetrate=44100*1.03,aresample=44100,atempo=1.07,equalizer=f=1000:t=q:w=1:g=1.5"
+
         cmd = [
             FFMPEG, "-y",
             "-threads", "0",
@@ -255,7 +260,7 @@ def cut_and_format_clip(
             "-filter_complex", filter_complex,
             "-map", "[v_out]",
             "-map", "0:a",
-            "-af", "atempo=1.1",
+            "-af", audio_filter,
             "-r", "30",
             "-pix_fmt", "yuv420p",
             "-c:v", encoder, *encoder_args,
