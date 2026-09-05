@@ -305,6 +305,7 @@ async function loadWorkplaceClips() {
                     <div style="display:flex; gap:8px;">
                         <button onclick="openPlayer('${videoId}','${c.youtube_url || ''}','${title}')" class="btn btn-outline" style="flex:1; justify-content:center; padding:8px; font-size:12px;">Watch</button>
                         <button onclick="publishClipToYouTube('${c.id}')" class="btn btn-generate" style="flex:1.4; justify-content:center; padding:8px; font-size:12px; background:#dc2626;">Post to YouTube</button>
+                        <button onclick="deleteClip('${c.id}')" class="btn btn-outline" title="Delete Clip" style="padding:8px 10px; font-size:12px; color:#ef4444; border-color:rgba(239,68,68,0.25);">🗑</button>
                     </div>
                 </div>
             </div>`;
@@ -312,6 +313,22 @@ async function loadWorkplaceClips() {
 
     } catch (e) {
         console.error('Workplace load error:', e);
+    }
+}
+
+async function deleteClip(clipId) {
+    if (!confirm('Are you sure you want to delete this clip?')) return;
+    try {
+        const res = await fetch(`/api/v1/clip/${clipId}`, { method: 'DELETE' });
+        if (res.ok) {
+            showToast('Clip deleted');
+            loadWorkplaceClips();
+            loadAnalytics();
+        } else {
+            showToast('Could not delete clip', 'error');
+        }
+    } catch (e) {
+        showToast('Delete request failed', 'error');
     }
 }
 

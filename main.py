@@ -506,38 +506,28 @@ async def debug_queue(user_id: str):
     except Exception as e:
         return {"error": str(e)}
 
-@app.get("/api/v1/debug/supabase-insert")
-async def debug_supabase_insert(user_id: str):
-    """Diagnoses Supabase table schema and insertion error."""
+@app.delete("/api/v1/clip/{clip_id}")
+async def delete_clip(clip_id: str, request: Request):
+    """Deletes a clip record."""
+    user_id = request.cookies.get("user_id", "demo_user_123")
     if not supabase:
-        return {"error": "No supabase client"}
-    results = {}
+        raise HTTPException(status_code=500, detail="Database not configured")
     try:
-        res1 = supabase.table("clips").insert({
-            "user_id": user_id,
-            "youtube_url": "",
-            "title": "Debug Test Draft",
-            "niche": "test",
-            "views": 0,
-            "status": "draft"
-        }).execute()
-        results["with_status"] = {"success": True, "data": res1.data}
+        supabase.table("clips").delete().eq("id", clip_id).eq("user_id", user_id).execute()
+        return {"status": "success"}
     except Exception as e:
-        results["with_status"] = {"success": False, "error": str(e)}
-        
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/v1/workplace/clean-test-drafts")
+async def clean_test_drafts(user_id: str = ""):
+    """Removes temporary test draft entries."""
+    if not supabase:
+        return {"status": "error"}
     try:
-        res2 = supabase.table("clips").insert({
-            "user_id": user_id,
-            "youtube_url": "",
-            "title": "Debug Test Draft 2",
-            "niche": "test",
-            "views": 0
-        }).execute()
-        results["without_status"] = {"success": True, "data": res2.data}
+        supabase.table("clips").delete().eq("title", "Debug Test Draft 2").execute()
+        return {"status": "success"}
     except Exception as e:
-        results["without_status"] = {"success": False, "error": str(e)}
-        
-    return results
+        return {"status": "error", "error": str(e)}
 
 @app.get("/api/v1/worker/poll")
 async def worker_poll(user_id: str):
