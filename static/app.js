@@ -90,7 +90,16 @@ function openPlayer(videoId, youtubeUrl, title) {
 
     const emptyNotice = document.getElementById('player-empty');
 
-    if (cleanYtId && cleanYtId !== 'TEST_ANALYTICS') {
+    // If it's a local file path rendered by desktop worker (e.g. C:\Users\...\\.clipai\\generated_videos\\clip_xyz.mp4)
+    let playableStreamUrl = youtubeUrl || '';
+    if (playableStreamUrl && (playableStreamUrl.includes('.mp4') || playableStreamUrl.includes('.clipai'))) {
+        const filename = playableStreamUrl.split(/[/\\]/).pop();
+        if (filename) {
+            playableStreamUrl = `http://127.0.0.1:58921/${encodeURIComponent(filename)}`;
+        }
+    }
+
+    if (cleanYtId && cleanYtId !== 'TEST_ANALYTICS' && (cleanYtId.length === 11 || (youtubeUrl && (youtubeUrl.includes('youtube.com') || youtubeUrl.includes('youtu.be'))))) {
         if (emptyNotice) emptyNotice.style.display = 'none';
         if (iframe) {
             iframe.style.display = 'block';
@@ -101,7 +110,7 @@ function openPlayer(videoId, youtubeUrl, title) {
             video.pause();
             video.src = '';
         }
-    } else if (youtubeUrl && (youtubeUrl.startsWith('http') || youtubeUrl.startsWith('/') || youtubeUrl.startsWith('blob:'))) {
+    } else if (playableStreamUrl && (playableStreamUrl.startsWith('http') || playableStreamUrl.startsWith('/') || playableStreamUrl.startsWith('blob:'))) {
         if (emptyNotice) emptyNotice.style.display = 'none';
         if (iframe) {
             iframe.style.display = 'none';
@@ -109,7 +118,7 @@ function openPlayer(videoId, youtubeUrl, title) {
         }
         if (video) {
             video.style.display = 'block';
-            video.src = youtubeUrl;
+            video.src = playableStreamUrl;
             video.play().catch(() => {});
         }
     } else {
@@ -284,9 +293,15 @@ async function loadWorkplaceClips() {
                 : 'https://via.placeholder.com/400x700/18181b/3b82f6?text=Pending+Review';
             const title = escHtml(c.title || c.niche || 'Viral Short');
             
+            const rawUrl = (c.youtube_url || '').replace(/\\/g, '/');
+            const safeUrl = encodeURI(rawUrl);
+            const rawFilename = rawUrl.split('/').pop() || '';
+            const streamUrl = rawFilename ? `http://127.0.0.1:58921/${encodeURIComponent(rawFilename)}` : '';
+            const playUrl = isLive ? (c.youtube_url || '') : streamUrl;
+            
             return `
             <div class="glass-card" style="display:flex; flex-direction:column; overflow:hidden; border-radius:14px; border:1px solid rgba(255,255,255,0.08); background:rgba(20,20,20,0.6);">
-                <div style="position:relative; aspect-ratio:9/16; background:#000; overflow:hidden; cursor:pointer;" onclick="openPlayer('${videoId}','${c.youtube_url || ''}','${title}')">
+                <div style="position:relative; aspect-ratio:9/16; background:#000; overflow:hidden; cursor:pointer;" onclick="openPlayer('${videoId}','${playUrl}','${title}')">
                     <img src="${thumbUrl}" style="width:100%; height:100%; object-fit:cover; opacity:0.85; transition:opacity 0.2s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.85'">
                     <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.25);">
                         <div style="width:48px; height:48px; border-radius:50%; background:rgba(220,38,38,0.9); display:flex; align-items:center; justify-content:center; box-shadow:0 4px 20px rgba(0,0,0,0.5);">
@@ -303,7 +318,7 @@ async function loadWorkplaceClips() {
                         <div style="font-size:12px; color:var(--text-3);">${c.created_at ? new Date(c.created_at).toLocaleDateString() : 'Recent'}</div>
                     </div>
                     <div style="display:flex; gap:8px;">
-                        <button onclick="openPlayer('${videoId}','${c.youtube_url || ''}','${title}')" class="btn btn-outline" style="flex:1; justify-content:center; padding:8px; font-size:12px;">Watch</button>
+                        <button onclick="openPlayer('${videoId}','${playUrl}','${title}')" class="btn btn-outline" style="flex:1; justify-content:center; padding:8px; font-size:12px;">Watch</button>
                         <button onclick="publishClipToYouTube('${c.id}')" class="btn btn-generate" style="flex:1.4; justify-content:center; padding:8px; font-size:12px; background:#dc2626;">Post to YouTube</button>
                         <button onclick="deleteClip('${c.id}')" class="btn btn-outline" title="Delete Clip" style="padding:8px 10px; font-size:12px; color:#ef4444; border-color:rgba(239,68,68,0.25);">🗑</button>
                     </div>

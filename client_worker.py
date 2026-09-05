@@ -204,6 +204,38 @@ def run_worker_loop():
             print(f"Unexpected polling error: {e}")
         time.sleep(3)
 
+def start_local_stream_server():
+    """Starts a local HTTP server on port 58921 to stream rendered draft videos to the web browser."""
+    from http.server import SimpleHTTPRequestHandler, HTTPServer
+    import urllib.parse
+    
+    video_dir = HOME_DIR / "generated_videos"
+    video_dir.mkdir(parents=True, exist_ok=True)
+    
+    class MediaStreamHandler(SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(video_dir), **kwargs)
+            
+        def end_headers(self):
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+            self.send_header('Access-Control-Allow-Headers', 'Range, Content-Type')
+            super().end_headers()
+            
+        def do_OPTIONS(self):
+            self.send_response(200)
+            self.end_headers()
+            
+        def log_message(self, format, *args):
+            pass  # Keep console quiet
+            
+    try:
+        httpd = HTTPServer(('127.0.0.1', 58921), MediaStreamHandler)
+        print("[Worker] Local video streaming server active at http://127.0.0.1:58921")
+        httpd.serve_forever()
+    except Exception as e:
+        print(f"[Worker] Local stream server error: {e}")
+
 def set_autostart(enable=True):
     key = reg.HKEY_CURRENT_USER
     key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -282,6 +314,10 @@ if __name__ == "__main__":
                 
     update_yt_dlp()
     
+    # Start local streaming server so browser can watch draft video files directly
+    stream_thread = threading.Thread(target=start_local_stream_server, daemon=True)
+    stream_thread.start()
+
     # Run the worker loop in a background thread so the system tray can block the main thread
     worker_thread = threading.Thread(target=run_worker_loop, daemon=True)
     worker_thread.start()
