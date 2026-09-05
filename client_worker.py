@@ -297,35 +297,51 @@ def setup_tray():
     icon.run()
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
+    IS_CLOUD = "--cloud" in sys.argv
+    IS_CLI = "--cli" in sys.argv
+
+    if IS_CLOUD:
+        # ── Cloud/Linux daemon mode ──────────────────────────────
+        # No tray, no Windows registry, no local stream server
+        print("╔══════════════════════════════════════╗")
+        print("║   ClipAI Cloud Worker (Linux/Cloud)  ║")
+        print("╚══════════════════════════════════════╝")
+        update_yt_dlp()
+        run_worker_loop()
+
+    elif len(sys.argv) > 1:
         arg = sys.argv[1]
         if arg == "--register":
             register_uri_scheme()
             sys.exit(0)
         elif arg.startswith("clipai://"):
-            # e.g. clipai://start?user_id=123
             parsed = urlparse(arg)
             qs = parse_qs(parsed.query)
             if "user_id" in qs:
                 USER_ID = qs["user_id"][0]
-    else:
-        # If the user just double-clicks the app, always ensure the URI scheme is registered
-        register_uri_scheme()
-                
-    update_yt_dlp()
-    
-    # Start local streaming server so browser can watch draft video files directly
-    stream_thread = threading.Thread(target=start_local_stream_server, daemon=True)
-    stream_thread.start()
 
-    # Run the worker loop in a background thread so the system tray can block the main thread
-    worker_thread = threading.Thread(target=run_worker_loop, daemon=True)
-    worker_thread.start()
-    
-    if "--cli" in sys.argv:
-        print("Running in CLI mode. Press Ctrl+C to exit.")
-        while True:
-            time.sleep(1)
+        update_yt_dlp()
+        stream_thread = threading.Thread(target=start_local_stream_server, daemon=True)
+        stream_thread.start()
+        worker_thread = threading.Thread(target=run_worker_loop, daemon=True)
+        worker_thread.start()
+        if IS_CLI:
+            print("Running in CLI mode. Press Ctrl+C to exit.")
+            while True:
+                time.sleep(1)
+        else:
+            setup_tray()
     else:
-        # Run system tray
-        setup_tray()
+        # Default: desktop double-click
+        register_uri_scheme()
+        update_yt_dlp()
+        stream_thread = threading.Thread(target=start_local_stream_server, daemon=True)
+        stream_thread.start()
+        worker_thread = threading.Thread(target=run_worker_loop, daemon=True)
+        worker_thread.start()
+        if IS_CLI:
+            print("Running in CLI mode. Press Ctrl+C to exit.")
+            while True:
+                time.sleep(1)
+        else:
+            setup_tray()
