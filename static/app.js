@@ -267,11 +267,11 @@ async function loadWorkplaceClips() {
         const res = await fetch('/api/v1/analytics');
         const data = await res.json();
         const allClips = data.videos || [];
-        // Display all generated clips in Workplace with instant preview & controls
-        const workplaceClips = allClips;
+        // Workplace shows unposted drafts waiting for review; posted videos belong in My Clips
+        const workplaceClips = allClips.filter(c => !c.youtube_url || c.youtube_url.trim() === '');
         
         if (workplaceClips.length === 0) {
-            container.innerHTML = '<div class="table-empty" style="grid-column: 1 / -1; padding: 48px 24px;">No clips generated yet. Go to Studio and generate your first viral clip!</div>';
+            container.innerHTML = '<div class="table-empty" style="grid-column: 1 / -1; padding: 48px 24px;">No draft clips waiting for review. All clips are live, or generate a new clip with auto-post turned off!</div>';
             return;
         }
 
