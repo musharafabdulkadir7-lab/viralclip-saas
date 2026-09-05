@@ -254,19 +254,16 @@ def cut_and_format_clip(
             output_path,
         ]
     else:
-        # Standard Cinematic Blur Mode — crystal-clear quality, perfect lip sync
-        # Background: proper boxblur (no downscale artifact), darkened so subject pops
-        # Foreground: unmodified scale to fit 9:16, no speed/pitch changes (zero drift)
-        # Uniqueness: subtle gamma shift + metadata strip — invisible to viewer, defeats fingerprint
+        # Black canvas mode — clean 9:16, no blur, no artifacts, perfect lip sync
+        # Video scaled to fit inside 1080x1920, black bars on sides if needed
+        # Uniqueness: 1% crop + subtle gamma shift + metadata strip — invisible, defeats fingerprint
         filter_complex = (
-            "[0:v]split=2[bg][fg]; "
-            "[bg]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:1920,"
-            "boxblur=luma_radius=28:luma_power=2:chroma_radius=14:chroma_power=2,"
-            "eq=brightness=-0.12:gamma_r=1.02:gamma_b=0.98[bg_blurred]; "
-            "[fg]scale=1080:1920:force_original_aspect_ratio=decrease:flags=lanczos[fg_scaled]; "
-            "[bg_blurred][fg_scaled]overlay=(W-w)/2:(H-h)/2[merged]; "
-            "[merged]crop=iw*0.99:ih*0.99:iw*0.005:ih*0.005,scale=1080:1920:flags=lanczos,"
-            f"drawtext=text='{safe_caption}':fontsize=38:fontcolor=white:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-text_h-350:font=Arial Bold:box=1:boxcolor=black@0.55:boxborderw=14:fix_bounds=1,"
+            f"color=c=black:s=1080x1920:r=30[canvas]; "
+            "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease:flags=lanczos,"
+            "crop=iw*0.99:ih*0.99:iw*0.005:ih*0.005,scale=1080:1920:flags=lanczos,"
+            "eq=gamma_r=1.02:gamma_b=0.98[fg_scaled]; "
+            "[canvas][fg_scaled]overlay=(W-w)/2:(H-h)/2[merged]; "
+            f"[merged]drawtext=text='{safe_caption}':fontsize=38:fontcolor=white:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-text_h-350:font=Arial Bold:box=1:boxcolor=black@0.55:boxborderw=14:fix_bounds=1,"
             f"drawtext=text='{safe_watermark}':fontsize=26:fontcolor=white@0.70:borderw=1:bordercolor=black@0.5:x=40:y=80:font=Arial:fix_bounds=1"
             f"{ass_filter}[v_out]"
         )
