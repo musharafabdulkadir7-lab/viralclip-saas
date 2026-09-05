@@ -748,6 +748,8 @@ function startStatusPolling(jobId) {
 async function openAccountModal() {
     const modal = document.getElementById('account-modal');
     if (!modal) return;
+    modal.classList.remove('hidden');
+    modal.style.display = 'flex';
     try {
         const res = await fetch('/api/v1/user/profile');
         const data = await res.json();
@@ -766,12 +768,14 @@ async function openAccountModal() {
     } catch (e) {
         console.error('Failed to load profile:', e);
     }
-    modal.classList.remove('hidden');
 }
 
 function closeAccountModal() {
     const modal = document.getElementById('account-modal');
-    if (modal) modal.classList.add('hidden');
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.style.display = 'none';
+    }
 }
 
 function logoutAccount() {
