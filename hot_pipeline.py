@@ -140,7 +140,39 @@ def prebake_clip_worker(niche: str, is_free_tier: bool = False):
             _replenishing_niches.discard(niche_key)
 
 
+def clear_stale_cache(keep_niche: str = None):
+    """
+    Clears out pre-baked cache files and downloaded videos for all niches except keep_niche.
+    Keeps local SSD storage empty and clean.
+    """
+    import shutil
+    try:
+        keep_key = "".join(c for c in keep_niche.lower() if c.isalnum() or c in (" ", "_")).strip().replace(" ", "_") if keep_niche else None
+        
+        # Clean hot pool directories
+        if os.path.exists(HOT_POOL_DIR):
+            for entry in os.listdir(HOT_POOL_DIR):
+                if keep_key and entry == keep_key:
+                    continue
+                target_dir = os.path.join(HOT_POOL_DIR, entry)
+                if os.path.isdir(target_dir):
+                    shutil.rmtree(target_dir, ignore_errors=True)
+                    
+        # Also clean old downloaded source videos to save disk space
+        downloaded_dir = Path.home() / ".clipai" / "downloaded_videos"
+        if downloaded_dir.exists():
+            for f in downloaded_dir.glob("*.*"):
+                try:
+                    if f.is_file():
+                        f.unlink()
+                except Exception:
+                    pass
+        print(f"[HotPipeline] Storage cleaned. Retained active niche: '{keep_niche or 'none'}'")
+    except Exception as e:
+        print(f"[HotPipeline] Storage clean warning: {e}")
+
 def trigger_replenish(niche: str, is_free_tier: bool = False):
     """Spawns an async background thread to keep the hot pool warm."""
     t = threading.Thread(target=prebake_clip_worker, args=(niche, is_free_tier), daemon=True)
     t.start()
+

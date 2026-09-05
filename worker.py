@@ -96,6 +96,8 @@ def run_clip_pipeline(niche: str, user_id: str, job_id: str, is_free_tier: bool 
         # ── 1. Check Extreme Hot-Pipeline Pool (0.05s Instant Hit) ──
         try:
             import hot_pipeline
+            # Purge stale pre-baked niches to keep user's disk storage empty
+            hot_pipeline.clear_stale_cache(keep_niche=niche)
             hot_clip = hot_pipeline.get_hot_clip(niche)
         except Exception:
             hot_clip = None
