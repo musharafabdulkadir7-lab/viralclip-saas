@@ -1,5 +1,6 @@
 // ─── Worker Connection State ──────────────────────────────────────────────────
 let workerIsAlive = false;
+let workerIsStarting = false;
 
 async function checkWorkerHeartbeat() {
     try {
@@ -7,16 +8,24 @@ async function checkWorkerHeartbeat() {
         const res = await fetch(`/api/v1/debug/queue?user_id=${userId}`);
         const data = await res.json();
         workerIsAlive = !!data.worker_alive;
+        if (workerIsAlive) workerIsStarting = false;
         
         const dot = document.getElementById('worker-dot');
         const label = document.getElementById('worker-label');
         if (dot && label) {
             if (workerIsAlive) {
                 dot.style.background = '#10b981';
+                dot.style.boxShadow = '0 0 10px rgba(16,185,129,0.5)';
                 label.textContent = 'Worker Active (🟢)';
                 label.style.color = '#10b981';
+            } else if (workerIsStarting) {
+                dot.style.background = '#f59e0b';
+                dot.style.boxShadow = '0 0 10px rgba(245,158,11,0.5)';
+                label.textContent = 'Worker Starting... (⏳)';
+                label.style.color = '#f59e0b';
             } else {
                 dot.style.background = '#ef4444';
+                dot.style.boxShadow = 'none';
                 label.textContent = 'Worker Offline';
                 label.style.color = 'var(--text-3)';
             }
@@ -25,13 +34,25 @@ async function checkWorkerHeartbeat() {
         workerIsAlive = false;
     }
 }
-setInterval(checkWorkerHeartbeat, 5000);
+setInterval(checkWorkerHeartbeat, 3000);
 
 function startWorkerURI() {
     const userId = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1] || 'demo_user_123';
+    workerIsStarting = true;
+    
+    const dot = document.getElementById('worker-dot');
+    const label = document.getElementById('worker-label');
+    if (dot && label) {
+        dot.style.background = '#f59e0b';
+        dot.style.boxShadow = '0 0 10px rgba(245,158,11,0.5)';
+        label.textContent = 'Worker Starting... (⏳)';
+        label.style.color = '#f59e0b';
+    }
+    
     window.location.href = `clipai://start?user_id=${userId}`;
-    showToast('Starting local worker...', 'info');
+    showToast('Starting local desktop worker...', 'info');
     setTimeout(checkWorkerHeartbeat, 2000);
+    setTimeout(checkWorkerHeartbeat, 5000);
 }
 
 // ─── In-App Video Player ───────────────────────────────────────────────────────
@@ -613,7 +634,7 @@ function startStatusPolling(jobId) {
                 updatePipelineSteps(pct);
             }
 
-            if (data.progress >= 100 || data.status === 'complete' || data.status === 'error') {
+            if (data.progress >= 100 || data.status === 'complete' || data.status === 'draft_ready' || data.status === 'error') {
                 clearInterval(pollingInterval);
                 localStorage.removeItem('active_job_id');
                 runBtn.disabled = false;
@@ -621,12 +642,21 @@ function startStatusPolling(jobId) {
                 progressFill.style.width = '100%';
                 setTimeout(() => progressContainer.classList.add('hidden'), 4000);
 
-                if (data.url) {
+                if (data.status === 'draft_ready' || (data.message && data.message.includes('Workplace'))) {
+                    addMessage('Director AI', `🎬 **Video rendered!** It is waiting in your <a href="javascript:void(0)" onclick="switchTab('workplace')">Workplace</a> for review before posting.`);
+                    showToast('Video saved to Workplace for review!');
+                    loadWorkplaceClips();
+                } else if (data.url && (data.url.includes('youtube.com') || data.url.includes('youtu.be'))) {
                     addMessage('Director AI', `Video is live! <a href="${data.url}" target="_blank">Watch on YouTube ↗</a>`);
                     showToast('Video posted to YouTube!');
+                    loadAnalytics();
                 } else if (data.status === 'error') {
                     addMessage('Director AI', `Error: ${data.message}`);
                     showToast('Generation failed — see activity log', 'error');
+                } else {
+                    addMessage('Director AI', `🎬 Video ready! Check your <a href="javascript:void(0)" onclick="switchTab('workplace')">Workplace</a>.`);
+                    showToast('Video ready in Workplace!');
+                    loadWorkplaceClips();
                 }
             }
         } catch (e) {

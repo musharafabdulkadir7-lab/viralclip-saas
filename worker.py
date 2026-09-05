@@ -104,7 +104,8 @@ def run_clip_pipeline(niche: str, user_id: str, job_id: str, is_free_tier: bool 
             clip_paths = hot_clip["clip_paths"]
             clip_info = hot_clip.get("clip_info", {"caption": niche.title(), "num_parts": len(clip_paths)})
             video = {"id": hot_clip.get("video_id", ""), "title": hot_clip.get("video_title", niche)}
-            update_job_status(job_id, "running", 80, "[HOT] Hot-Pipeline hit! Pre-baked in 0.05s, starting upload...", user_id=user_id)
+            msg = "⚡ Instant Clip Ready! Starting upload..." if auto_upload else "⚡ Instant Clip Ready! Saving to Workplace..."
+            update_job_status(job_id, "running", 80, msg, user_id=user_id)
             # Replenish in background for next time
             hot_pipeline.trigger_replenish(niche, is_free_tier)
         else:
