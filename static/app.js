@@ -267,15 +267,15 @@ async function loadWorkplaceClips() {
         const res = await fetch('/api/v1/analytics');
         const data = await res.json();
         const allClips = data.videos || [];
-        // Workplace is only for draft / unposted videos awaiting review
-        const pendingClips = allClips.filter(c => !c.youtube_url || c.status === 'draft' || c.status === 'draft_ready');
+        // Display all generated clips in Workplace with instant preview & controls
+        const workplaceClips = allClips;
         
-        if (pendingClips.length === 0) {
-            container.innerHTML = '<div class="table-empty" style="grid-column: 1 / -1; padding: 48px 24px;">No unposted clips awaiting review. All generated clips have been posted to your channel! Check the "My Clips" tab.</div>';
+        if (workplaceClips.length === 0) {
+            container.innerHTML = '<div class="table-empty" style="grid-column: 1 / -1; padding: 48px 24px;">No clips generated yet. Go to Studio and generate your first viral clip!</div>';
             return;
         }
 
-        container.innerHTML = pendingClips.map(c => {
+        container.innerHTML = workplaceClips.map(c => {
             const rawId = c.youtube_url ? (c.youtube_url.split('shorts/')[1] || c.youtube_url.split('v=')[1] || '') : '';
             const videoId = rawId.split('?')[0];
             const isLive = Boolean(c.youtube_url);
