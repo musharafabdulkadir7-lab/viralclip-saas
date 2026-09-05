@@ -510,38 +510,56 @@
         <button onclick="openSubscriptionsModal(); document.getElementById('paywall-modal').classList.add('hidden');" class="btn btn-upgrade" style="width: 100%; padding: 14px; font-size: 16px; font-weight: 700; background: linear-gradient(135deg, var(--blue), #2563eb);">View Subscription Plans</button>
         <button onclick="document.getElementById('paywall-modal').classList.add('hidden');" class="btn-ghost" style="margin-top: 12px;">Maybe later</button>
     </div>
+</div>
+
 <!-- ── User Account & Auth Modal ───────────────────────── -->
 <div id="account-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeAccountModal()">
-    <div class="glass-modal modal-box" style="max-width: 440px; padding: 36px; border: 1px solid var(--border); box-shadow: 0 24px 80px rgba(0,0,0,0.7); text-align: left;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px;">
-            <div style="font-size: 22px; font-weight: 800; color: #fff;">Account Profile</div>
+    <div class="glass-modal modal-box" style="max-width: 480px; padding: 36px; border: 1px solid var(--border); box-shadow: 0 24px 80px rgba(0,0,0,0.7); text-align: left;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 18px;">
+            <div style="font-size: 22px; font-weight: 800; color: #fff; display:flex; align-items:center; gap:8px;">
+                <span>👤</span> Account &amp; Settings
+            </div>
             <button onclick="closeAccountModal()" style="background:none; border:none; color:var(--text-3); font-size:22px; cursor:pointer;">✕</button>
         </div>
-        <p style="font-size: 13.5px; color: var(--text-2); margin-bottom: 20px; line-height: 1.5;">
-            Link your email to track your generations, manage active subscription licenses, and sync desktop workers.
+        <p style="font-size: 13px; color: var(--text-2); margin-bottom: 20px; line-height: 1.5;">
+            Manage your credentials, subscription license, and link your desktop rendering worker.
         </p>
+        
         <div style="margin-bottom: 16px;">
-            <label class="input-label" style="font-size: 11px; margin-bottom: 6px; display: block;">Email Address</label>
-            <input type="email" id="account-email-input" class="niche-input-lg" placeholder="your.email@example.com" style="width:100%; font-size:14px; padding:10px 14px;">
-        </div>
-        <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 20px; font-size: 12.5px;">
-            <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
-                <span style="color:var(--text-3);">Current Plan:</span>
-                <span id="account-plan-badge" style="color:var(--blue-light); font-weight:700;">Free Tier</span>
-            </div>
-            <div style="display:flex; justify-content:space-between;">
-                <span style="color:var(--text-3);">Account ID:</span>
-                <span id="account-user-id" style="color:#fff; font-family:monospace; font-size:11px;">user_...</span>
+            <label class="input-label" style="font-size: 11px; margin-bottom: 6px; display: block;">Email / Account Login</label>
+            <div style="display:flex; gap:8px;">
+                <input type="email" id="account-email-input" class="niche-input-lg" placeholder="your.email@example.com" style="flex:1; font-size:14px; padding:10px 14px;">
+                <button onclick="saveAccountEmail()" class="btn btn-generate" style="padding:10px 18px; font-size:13px;">Save</button>
             </div>
         </div>
-        <div style="margin-bottom: 20px;">
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px;">
+            <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 8px; padding: 12px;">
+                <div style="font-size:11px; color:var(--text-3); text-transform:uppercase; font-weight:700;">Active Plan</div>
+                <div id="account-plan-badge" style="color:#10b981; font-weight:800; font-size:15px; margin-top:4px;">Free Tier</div>
+            </div>
+            <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 8px; padding: 12px;">
+                <div style="font-size:11px; color:var(--text-3); text-transform:uppercase; font-weight:700;">Worker Status</div>
+                <div id="account-worker-status" style="color:#3b82f6; font-weight:800; font-size:14px; margin-top:4px;">Checking...</div>
+            </div>
+        </div>
+
+        <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 16px; font-size: 12.5px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="color:var(--text-3);">Linked User ID:</span>
+                <span id="account-user-id" style="color:#fff; font-family:monospace; font-size:11.5px; background:rgba(0,0,0,0.3); padding:3px 8px; border-radius:4px;">user_...</span>
+            </div>
+        </div>
+
+        <div style="margin-bottom: 18px;">
             <button onclick="startWorkerURI()" class="btn btn-outline" style="width:100%; justify-content:center; padding:10px; font-size:13px; border-color:var(--blue); color:var(--blue-light); background:rgba(37,99,235,0.1);">
                 ⚡ Pair Desktop Worker to this Account
             </button>
         </div>
-        <div style="display:flex; gap:10px;">
-            <button onclick="saveAccountEmail()" class="btn btn-generate" style="flex:1; justify-content:center; padding:11px;">Save Account</button>
-            <button onclick="openSubscriptionsModal(); closeAccountModal();" class="btn btn-outline" style="flex:1; justify-content:center; padding:11px;">Upgrade Plan</button>
+
+        <div style="display:flex; gap:10px; border-top: 1px solid var(--border); padding-top: 16px;">
+            <button onclick="openSubscriptionsModal(); closeAccountModal();" class="btn btn-upgrade" style="flex:1; justify-content:center; padding:11px; font-size:13px;">💎 Upgrade License</button>
+            <button onclick="logoutAccount()" class="btn btn-outline" style="flex:0.8; justify-content:center; padding:11px; font-size:13px; color:#ef4444; border-color:rgba(239,68,68,0.3);">Sign Out</button>
         </div>
     </div>
 </div>
@@ -568,7 +586,7 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="/static/app.js?v=118"></script>
+<script src="/static/app.js?v=119"></script>
 
 <!-- ── Brand Kit Modal ───────────────────────────────── -->
 <div id="brand-modal" class="brand-modal hidden">

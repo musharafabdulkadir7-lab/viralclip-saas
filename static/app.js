@@ -754,9 +754,15 @@ async function openAccountModal() {
         const emailInput = document.getElementById('account-email-input');
         const planBadge = document.getElementById('account-plan-badge');
         const userIdSpan = document.getElementById('account-user-id');
+        const workerStatusEl = document.getElementById('account-worker-status');
+        
         if (emailInput) emailInput.value = data.email || '';
-        if (planBadge) planBadge.textContent = (data.license || 'free_tier').toUpperCase();
+        if (planBadge) planBadge.textContent = (data.license || 'free_tier').replace('_', ' ').toUpperCase();
         if (userIdSpan) userIdSpan.textContent = data.user_id || '';
+        if (workerStatusEl) {
+            workerStatusEl.textContent = workerIsAlive ? '🟢 Online' : '🔴 Offline';
+            workerStatusEl.style.color = workerIsAlive ? '#10b981' : '#ef4444';
+        }
     } catch (e) {
         console.error('Failed to load profile:', e);
     }
@@ -766,6 +772,14 @@ async function openAccountModal() {
 function closeAccountModal() {
     const modal = document.getElementById('account-modal');
     if (modal) modal.classList.add('hidden');
+}
+
+function logoutAccount() {
+    if (!confirm('Are you sure you want to sign out?')) return;
+    localStorage.removeItem('clipai_user_id');
+    document.cookie = 'user_id=;path=/;max-age=0;SameSite=Lax';
+    showToast('Signed out successfully');
+    setTimeout(() => window.location.reload(), 600);
 }
 
 async function saveAccountEmail() {
@@ -888,6 +902,28 @@ function selectNichePreset(nicheName, btnEl) {
 // ─── Generate Button ──────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     checkWorkerHeartbeat(); // initial check
+
+    // Check account requirement when toggling Auto-Post OFF
+    const autoPostToggle = document.getElementById('studio-autopost-toggle');
+    if (autoPostToggle) {
+        autoPostToggle.addEventListener('change', async (e) => {
+            if (!autoPostToggle.checked) {
+                // User is trying to turn OFF auto-post (draft/review mode)
+                try {
+                    const res = await fetch('/api/v1/user/profile');
+                    const data = await res.json();
+                    if (!data.email) {
+                        e.preventDefault();
+                        autoPostToggle.checked = true; // Revert switch
+                        showToast('Please log into your account first to use Workplace review mode!', 'warning');
+                        openAccountModal();
+                    }
+                } catch (err) {
+                    console.error('Auth verification error:', err);
+                }
+            }
+        });
+    }
 
     const runBtn = document.getElementById('run-clip-farm-btn');
 
