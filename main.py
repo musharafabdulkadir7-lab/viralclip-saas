@@ -252,12 +252,12 @@ async def update_user_profile(payload: UserProfileUpdate, request: Request, resp
     return {"status": "success", "email": email, "user_id": user_id}
 
 @app.get("/api/v1/analytics")
-async def get_analytics(request: Request):
-    user_id = request.cookies.get("user_id", "demo_user_123")
+async def get_analytics(request: Request, user_id: str = ""):
+    active_user = user_id or request.cookies.get("user_id", "demo_user_123")
     if not supabase:
         return {"videos": [], "total_views": 0, "total_videos": 0, "avg_views": 0}
     try:
-        res = supabase.table("clips").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
+        res = supabase.table("clips").select("*").eq("user_id", active_user).order("created_at", desc=True).execute()
         videos = res.data or []
         total_views = sum(v.get("views", 0) for v in videos)
         return {

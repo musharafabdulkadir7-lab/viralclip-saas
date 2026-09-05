@@ -273,7 +273,8 @@ async function loadWorkplaceClips() {
     const container = document.getElementById('workplace-clips-container');
     if (!container) return;
     try {
-        const res = await fetch('/api/v1/analytics');
+        const userId = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1] || '';
+        const res = await fetch(`/api/v1/analytics${userId ? `?user_id=${userId}` : ''}`);
         const data = await res.json();
         const allClips = data.videos || [];
         // Workplace shows unposted drafts waiting for review (clips without a live YouTube link)
@@ -448,7 +449,8 @@ let viewsChart = null;
 
 async function loadAnalytics() {
     try {
-        const res = await fetch('/api/v1/analytics');
+        const userId = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1] || '';
+        const res = await fetch(`/api/v1/analytics${userId ? `?user_id=${userId}` : ''}`);
         const data = await res.json();
 
         document.getElementById('stat-total-views').textContent = formatNumber(data.total_views);
