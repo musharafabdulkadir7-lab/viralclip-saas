@@ -564,6 +564,21 @@ async def worker_heartbeat(user_id: str):
     alive = redis_client.get(f"worker_heartbeat:{user_id}")
     return {"alive": bool(alive)}
 
+@app.get("/api/v1/worker/scripts")
+async def get_worker_scripts():
+    """Returns the latest production pipeline code for live hot-updating of desktop workers."""
+    script_names = ["worker.py", "clip_cutter.py", "clip_finder.py", "video_finder.py", "video_downloader.py", "youtube_uploader.py", "hot_pipeline.py"]
+    scripts = {}
+    base = Path(__file__).resolve().parent
+    for s in script_names:
+        p = base / s
+        if p.exists():
+            try:
+                scripts[s] = p.read_text(encoding="utf-8")
+            except Exception:
+                pass
+    return {"scripts": scripts}
+
 class ProgressPayload(BaseModel):
     job_id: str
     status: str = "running"

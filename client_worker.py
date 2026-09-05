@@ -135,13 +135,37 @@ def update_yt_dlp():
     except Exception as e:
         print(f"Failed to setup yt-dlp: {e}")
 
+def sync_live_pipeline_scripts():
+    """Dynamically fetches the latest production fixes from the cloud server and updates local modules in real-time."""
+    try:
+        res = requests.get(f"{API_BASE_URL}/api/v1/worker/scripts", timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            scripts = data.get("scripts", {})
+            for name, code in scripts.items():
+                target_path = Path(__file__).resolve().parent / name
+                try:
+                    target_path.write_text(code, encoding="utf-8")
+                except Exception:
+                    pass
+            print(f"[Worker] Live hot-sync complete: {len(scripts)} pipeline scripts updated to latest version.")
+    except Exception as e:
+        print(f"[Worker] Live hot-sync warning (offline/cached): {e}")
+
 def run_worker_loop():
     global is_running
     print(f"Starting ClipAI Companion Worker for user: {USER_ID}")
     
+    # Always pull latest fixes live before starting loop
+    sync_live_pipeline_scripts()
+
     try:
-        from worker import run_clip_pipeline
+        import importlib
+        import worker
         import hot_pipeline
+        importlib.reload(worker)
+        importlib.reload(hot_pipeline)
+        from worker import run_clip_pipeline
         # Speculatively warm cache for top niches in the background with zero user wait
         for default_niche in ["motivation", "finance", "gaming"]:
             hot_pipeline.trigger_replenish(default_niche, is_free_tier=False)
