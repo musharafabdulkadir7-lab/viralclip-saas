@@ -44,7 +44,7 @@ def update_job_status(job_id: str, status: str, progress: int, message: str, url
     print(f"[{progress}%] {status}: {safe_msg}")
     try:
         import requests
-        if status in ["complete", "error"]:
+        if status in ["complete", "draft_ready", "error"]:
             requests.post(f"{API_BASE_URL}/api/v1/worker/complete", json={
                 "job_id": job_id,
                 "status": status,
