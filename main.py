@@ -243,13 +243,26 @@ async def update_user_profile(payload: UserProfileUpdate, request: Request, resp
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Invalid email address")
     
+    final_user_id = user_id
+    license_tier = "free_tier"
     if supabase:
         try:
-            supabase.table("users").update({"email": email}).eq("id", user_id).execute()
+            # Check if an account with this email already exists
+            res = supabase.table("users").select("*").eq("email", email).execute()
+            if res.data and len(res.data) > 0:
+                existing_user = res.data[0]
+                final_user_id = existing_user.get("id", user_id)
+                license_tier = existing_user.get("license", "free_tier")
+            else:
+                # Update current session's user record with the email
+                supabase.table("users").update({"email": email}).eq("id", user_id).execute()
+                final_user_id = user_id
         except Exception as e:
-            print(f"Failed to update email: {e}")
+            print(f"Failed to link/find account email: {e}")
 
-    return {"status": "success", "email": email, "user_id": user_id}
+    # Set persistent cookie matching the linked account ID
+    response.set_cookie(key="user_id", value=final_user_id, max_age=31536000, samesite="lax")
+    return {"status": "success", "email": email, "user_id": final_user_id, "license": license_tier}
 
 @app.get("/api/v1/analytics")
 async def get_analytics(request: Request, user_id: str = ""):

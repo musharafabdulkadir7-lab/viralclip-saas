@@ -782,10 +782,17 @@ async function saveAccountEmail() {
         });
         const data = await res.json();
         if (res.ok) {
+            if (data.user_id) {
+                localStorage.setItem('clipai_user_id', data.user_id);
+                document.cookie = `user_id=${data.user_id};path=/;max-age=31536000;SameSite=Lax`;
+            }
             showToast('Account profile linked successfully!');
             const userLabel = document.getElementById('user-display-label');
             if (userLabel) userLabel.textContent = email.split('@')[0];
             closeAccountModal();
+            loadWorkplaceClips();
+            loadAnalytics();
+            checkWorkerHeartbeat();
         } else {
             showToast(data.detail || 'Failed to update email', 'error');
         }

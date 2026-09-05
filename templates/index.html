@@ -534,6 +534,11 @@
                 <span id="account-user-id" style="color:#fff; font-family:monospace; font-size:11px;">user_...</span>
             </div>
         </div>
+        <div style="margin-bottom: 20px;">
+            <button onclick="startWorkerURI()" class="btn btn-outline" style="width:100%; justify-content:center; padding:10px; font-size:13px; border-color:var(--blue); color:var(--blue-light); background:rgba(37,99,235,0.1);">
+                ⚡ Pair Desktop Worker to this Account
+            </button>
+        </div>
         <div style="display:flex; gap:10px;">
             <button onclick="saveAccountEmail()" class="btn btn-generate" style="flex:1; justify-content:center; padding:11px;">Save Account</button>
             <button onclick="openSubscriptionsModal(); closeAccountModal();" class="btn btn-outline" style="flex:1; justify-content:center; padding:11px;">Upgrade Plan</button>
@@ -563,7 +568,7 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="/static/app.js?v=117"></script>
+<script src="/static/app.js?v=118"></script>
 
 <!-- ── Brand Kit Modal ───────────────────────────────── -->
 <div id="brand-modal" class="brand-modal hidden">
