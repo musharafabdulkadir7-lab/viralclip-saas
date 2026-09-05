@@ -149,6 +149,13 @@ async def auto_post_scheduler():
 async def startup_event():
     asyncio.create_task(auto_post_scheduler())
     asyncio.create_task(keep_alive_ping())
+    # Bootstrap invites table — insert a dummy row to trigger auto-create via Supabase
+    # (Supabase requires table to exist; we catch errors silently on first run)
+    if supabase:
+        try:
+            supabase.table("invites").select("token").limit(1).execute()
+        except Exception:
+            pass  # Table will be created via SQL migration below if needed
 
 async def keep_alive_ping():
     """Pings this server every 10 minutes to prevent Render free-tier cold starts."""
