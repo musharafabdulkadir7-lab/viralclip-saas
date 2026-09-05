@@ -18,6 +18,22 @@ MIN_DURATION_SEC = 300   # 5 minutes
 MAX_AGE_DAYS = 730
 TOP_N = 3
 
+# Automated Content ID blacklist: major entertainment conglomerates, TV shows, and copyrighted broadcasts
+COPYRIGHT_BLACKLIST = [
+    "nbc", "universal", "snl", "saturday night live", "the voice", "jimmy fallon", "tonight show",
+    "paramount", "warner", "disney", "marvel", "netflix", "hbo", "sony pictures", "fox entertainment",
+    "cbs", "abc", "espn", "ufc", "premier league", "champions league", "nba", "fifa", "wwe",
+    "movie clip", "full movie", "tv show", "trailer", "official soundtrack", "vevo"
+]
+
+def is_copyright_risk(title: str, channel_title: str = "") -> bool:
+    """Checks if a title or channel is associated with high-risk major media studio Content ID claims."""
+    combined = f"{title} {channel_title}".lower()
+    for word in COPYRIGHT_BLACKLIST:
+        if word in combined:
+            return True
+    return False
+
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 
 
@@ -123,6 +139,11 @@ def _search_via_api(niche: str, max_results: int = 20) -> list:
         view_count = int(item.get("statistics", {}).get("viewCount", 0))
         title = _safe(item.get("snippet", {}).get("title", ""))[:60]
 
+        channel_title = _safe(item.get("snippet", {}).get("channelTitle", ""))
+        if is_copyright_risk(title, channel_title):
+            log(f"  [SKIP] Copyright Risk (Content ID flagged studio): {title} ({channel_title})")
+            continue
+
         if duration_sec < MIN_DURATION_SEC:
             log(f"  [SKIP] Too short ({duration_sec//60}min): {title}")
             continue
@@ -174,6 +195,10 @@ def _search_via_ytdlp(niche: str, max_results: int = 15) -> list:
                 duration = entry.get("duration") or 0
                 view_count = entry.get("view_count") or 0
                 title = _safe(entry.get("title", ""))[:60]
+
+                uploader = _safe(entry.get("uploader", ""))
+                if is_copyright_risk(title, uploader):
+                    continue
 
                 if vid_id in used:
                     continue
