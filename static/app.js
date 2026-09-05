@@ -35,8 +35,6 @@ function startWorkerURI() {
 }
 
 // ─── In-App Video Player ───────────────────────────────────────────────────────
-let currentVideoUrl = '';
-
 function openPlayer(videoId, youtubeUrl, title) {
     const modal = document.getElementById('player-modal');
     const iframe = document.getElementById('player-iframe');
@@ -46,11 +44,10 @@ function openPlayer(videoId, youtubeUrl, title) {
     if (!modal) return;
 
     currentVideoUrl = youtubeUrl || '';
-
     if (titleEl) titleEl.textContent = title || 'Viral Short';
 
     if (linkEl) {
-        if (youtubeUrl) {
+        if (youtubeUrl && (youtubeUrl.includes('youtube.com') || youtubeUrl.includes('youtu.be'))) {
             linkEl.href = youtubeUrl;
             linkEl.style.display = 'block';
         } else {
@@ -58,16 +55,29 @@ function openPlayer(videoId, youtubeUrl, title) {
         }
     }
 
-    if (videoId) {
+    // Extract genuine YouTube Video ID from any format
+    let cleanYtId = videoId || '';
+    if (youtubeUrl) {
+        if (youtubeUrl.includes('/shorts/')) {
+            cleanYtId = youtubeUrl.split('/shorts/')[1].split('?')[0].split('&')[0];
+        } else if (youtubeUrl.includes('v=')) {
+            cleanYtId = youtubeUrl.split('v=')[1].split('&')[0];
+        } else if (youtubeUrl.includes('youtu.be/')) {
+            cleanYtId = youtubeUrl.split('youtu.be/')[1].split('?')[0];
+        }
+    }
+
+    if (cleanYtId && cleanYtId !== 'TEST_ANALYTICS') {
         if (iframe) {
             iframe.style.display = 'block';
-            iframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1`;
+            iframe.src = `https://www.youtube.com/embed/${cleanYtId}?autoplay=1&rel=0`;
         }
         if (video) {
             video.style.display = 'none';
             video.pause();
+            video.src = '';
         }
-    } else if (youtubeUrl && (youtubeUrl.endsWith('.mp4') || youtubeUrl.startsWith('/'))) {
+    } else if (youtubeUrl) {
         if (iframe) {
             iframe.style.display = 'none';
             iframe.src = '';
@@ -219,20 +229,22 @@ async function loadWorkplaceClips() {
     try {
         const res = await fetch('/api/v1/analytics');
         const data = await res.json();
-        const clips = data.videos || [];
+        const allClips = data.videos || [];
+        // Workplace is only for draft / unposted videos awaiting review
+        const pendingClips = allClips.filter(c => !c.youtube_url || c.status === 'draft' || c.status === 'draft_ready');
         
-        if (clips.length === 0) {
-            container.innerHTML = '<div class="table-empty" style="grid-column: 1 / -1;">No clips generated yet. Head to Studio to create your first clip!</div>';
+        if (pendingClips.length === 0) {
+            container.innerHTML = '<div class="table-empty" style="grid-column: 1 / -1; padding: 48px 24px;">No unposted clips awaiting review. All generated clips have been posted to your channel! Check the "My Clips" tab.</div>';
             return;
         }
 
-        container.innerHTML = clips.map(c => {
+        container.innerHTML = pendingClips.map(c => {
             const rawId = c.youtube_url ? (c.youtube_url.split('shorts/')[1] || c.youtube_url.split('v=')[1] || '') : '';
             const videoId = rawId.split('?')[0];
             const isLive = Boolean(c.youtube_url);
             const thumbUrl = videoId
                 ? `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`
-                : 'https://via.placeholder.com/400x700/18181b/3b82f6?text=Preview+Clip';
+                : 'https://via.placeholder.com/400x700/18181b/3b82f6?text=Pending+Review';
             const title = escHtml(c.title || c.niche || 'Viral Short');
             
             return `
@@ -244,8 +256,8 @@ async function loadWorkplaceClips() {
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg>
                         </div>
                     </div>
-                    <div style="position:absolute; top:12px; right:12px; background:${isLive ? 'rgba(16,185,129,0.85)' : 'rgba(234,179,8,0.85)'}; color:white; font-size:11px; font-weight:700; padding:4px 8px; border-radius:6px; text-transform:uppercase;">
-                        ${isLive ? '✓ Live on YT' : '⏳ Ready to Review'}
+                    <div style="position:absolute; top:12px; right:12px; background:rgba(234,179,8,0.85); color:white; font-size:11px; font-weight:700; padding:4px 8px; border-radius:6px; text-transform:uppercase;">
+                        ⏳ Ready to Review
                     </div>
                 </div>
                 <div style="padding:16px; display:flex; flex-direction:column; gap:10px; flex:1; justify-content:space-between;">
@@ -255,11 +267,7 @@ async function loadWorkplaceClips() {
                     </div>
                     <div style="display:flex; gap:8px;">
                         <button onclick="openPlayer('${videoId}','${c.youtube_url || ''}','${title}')" class="btn btn-outline" style="flex:1; justify-content:center; padding:8px; font-size:12px;">Watch</button>
-                        ${!isLive ? `
                         <button onclick="publishClipToYouTube('${c.id}')" class="btn btn-generate" style="flex:1.4; justify-content:center; padding:8px; font-size:12px; background:#dc2626;">Post to YouTube</button>
-                        ` : `
-                        <a href="${c.youtube_url}" target="_blank" class="btn btn-connect" style="flex:1; justify-content:center; padding:8px; font-size:12px; text-decoration:none;">Open ↗</a>
-                        `}
                     </div>
                 </div>
             </div>`;

@@ -14,6 +14,14 @@ if getattr(sys, 'frozen', False):
     if str(bundle_dir) not in sys.path:
         sys.path.insert(0, str(bundle_dir))
 
+# Force UTF-8 on Windows consoles to prevent charmap encoding crashes
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 # Import video processing modules — fail softly if not installed
 MODULES_AVAILABLE = True
 try:
@@ -23,8 +31,8 @@ try:
     import clip_cutter
     import youtube_uploader
 except ImportError as e:
-    print(f"Warning: Video processing modules not found: {e}")
     MODULES_AVAILABLE = False
+    print(f"Warning: Video modules could not be imported ({e}). Running in placeholder mode.")
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
@@ -32,7 +40,8 @@ def update_job_status(job_id: str, status: str, progress: int, message: str, url
     """Updates job progress back to the cloud via HTTP API."""
     # Read fresh each time so .exe env vars are always respected
     API_BASE_URL = os.environ.get("API_BASE_URL", "https://viralclip-saas.onrender.com")
-    print(f"[{progress}%] {status}: {message}")
+    safe_msg = message.encode("ascii", errors="replace").decode("ascii")
+    print(f"[{progress}%] {status}: {safe_msg}")
     try:
         import requests
         if status in ["complete", "error"]:
@@ -95,7 +104,7 @@ def run_clip_pipeline(niche: str, user_id: str, job_id: str, is_free_tier: bool 
             clip_paths = hot_clip["clip_paths"]
             clip_info = hot_clip.get("clip_info", {"caption": niche.title(), "num_parts": len(clip_paths)})
             video = {"id": hot_clip.get("video_id", ""), "title": hot_clip.get("video_title", niche)}
-            update_job_status(job_id, "running", 80, "⚡ Hot-Pipeline hit! Pre-baked in 0.05s, starting upload...", user_id=user_id)
+            update_job_status(job_id, "running", 80, "[HOT] Hot-Pipeline hit! Pre-baked in 0.05s, starting upload...", user_id=user_id)
             # Replenish in background for next time
             hot_pipeline.trigger_replenish(niche, is_free_tier)
         else:
