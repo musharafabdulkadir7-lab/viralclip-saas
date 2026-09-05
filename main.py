@@ -877,6 +877,57 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
 
     return {"status": "success"}
 
+# ─── Invite Link System ─────────────────────────────────────────────────────────
+import secrets as _secrets
+
+ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "clipai_admin_2024")
+
+@app.post("/api/v1/admin/generate-invite")
+async def generate_invite(request: Request, count: int = 1):
+    """Generate one-time invite links that grant pro license on redemption."""
+    auth = request.headers.get("X-Admin-Secret", "")
+    if auth != ADMIN_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database not connected")
+    links = []
+    for _ in range(count):
+        token = _secrets.token_urlsafe(24)
+        try:
+            supabase.table("invites").insert({
+                "token": token,
+                "redeemed": False,
+            }).execute()
+            base_url = str(request.base_url).rstrip("/")
+            links.append(f"{base_url}/redeem/{token}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"DB error: {e}")
+    return {"links": links}
+
+@app.get("/redeem/{token}")
+async def redeem_invite(token: str, response: Response):
+    """User visits this link — grants pro license, sets cookie, redirects to app."""
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database not connected")
+    try:
+        res = supabase.table("invites").select("*").eq("token", token).eq("redeemed", False).execute()
+        if not res.data:
+            from fastapi.responses import HTMLResponse as _HR
+            return _HR("""<html><body style='font-family:sans-serif;text-align:center;padding:60px;background:#0f0f0f;color:white'>
+                <h2>&#10060; Invalid or already used invite link.</h2>
+                <p>This link has already been redeemed or doesn't exist.</p>
+                <a href='/' style='color:#3b82f6'>&#8592; Back to ClipAI</a></body></html>""", status_code=400)
+        import uuid as _uuid
+        new_user_id = f"user_{_uuid.uuid4().hex[:8]}"
+        supabase.table("users").insert({"id": new_user_id, "license": "pro", "free_clips_used": 0}).execute()
+        supabase.table("invites").update({"redeemed": True, "redeemed_by": new_user_id}).eq("token", token).execute()
+        from fastapi.responses import RedirectResponse as _RR2
+        redir = _RR2(url="/", status_code=302)
+        redir.set_cookie("user_id", new_user_id, max_age=60*60*24*365, samesite="lax")
+        return redir
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 from fastapi.responses import RedirectResponse
 import google_auth_oauthlib.flow
 
