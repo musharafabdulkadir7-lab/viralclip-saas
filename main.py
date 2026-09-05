@@ -506,6 +506,39 @@ async def debug_queue(user_id: str):
     except Exception as e:
         return {"error": str(e)}
 
+@app.get("/api/v1/debug/supabase-insert")
+async def debug_supabase_insert(user_id: str):
+    """Diagnoses Supabase table schema and insertion error."""
+    if not supabase:
+        return {"error": "No supabase client"}
+    results = {}
+    try:
+        res1 = supabase.table("clips").insert({
+            "user_id": user_id,
+            "youtube_url": "",
+            "title": "Debug Test Draft",
+            "niche": "test",
+            "views": 0,
+            "status": "draft"
+        }).execute()
+        results["with_status"] = {"success": True, "data": res1.data}
+    except Exception as e:
+        results["with_status"] = {"success": False, "error": str(e)}
+        
+    try:
+        res2 = supabase.table("clips").insert({
+            "user_id": user_id,
+            "youtube_url": "",
+            "title": "Debug Test Draft 2",
+            "niche": "test",
+            "views": 0
+        }).execute()
+        results["without_status"] = {"success": True, "data": res2.data}
+    except Exception as e:
+        results["without_status"] = {"success": False, "error": str(e)}
+        
+    return results
+
 @app.get("/api/v1/worker/poll")
 async def worker_poll(user_id: str):
     if not redis_client:
