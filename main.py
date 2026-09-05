@@ -543,6 +543,8 @@ async def worker_complete(payload: JobCompletePayload, user_id: str):
     
     # Save to supabase if complete or draft_ready
     if payload.status in ["complete", "draft_ready"] and supabase:
+        # Try with status field first, fall back without status field if column does not exist
+        saved = False
         try:
             supabase.table("clips").insert({
                 "user_id": user_id,
@@ -552,8 +554,20 @@ async def worker_complete(payload: JobCompletePayload, user_id: str):
                 "views": 0,
                 "status": "published" if payload.url else "draft"
             }).execute()
-        except Exception as e:
-            print(f"Clips save error: {e}")
+            saved = True
+        except Exception as e1:
+            print(f"Clips save with status failed: {e1}")
+            try:
+                supabase.table("clips").insert({
+                    "user_id": user_id,
+                    "youtube_url": payload.url,
+                    "title": payload.title,
+                    "niche": payload.niche,
+                    "views": 0
+                }).execute()
+                saved = True
+            except Exception as e2:
+                print(f"Clips fallback save error: {e2}")
             
     return {"status": "ok"}
 
