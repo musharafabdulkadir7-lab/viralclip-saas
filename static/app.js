@@ -1,10 +1,37 @@
 // ─── Worker Connection State ──────────────────────────────────────────────────
 let workerIsAlive = false;
 
+async function checkWorkerHeartbeat() {
+    try {
+        const userId = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1] || 'demo_user_123';
+        const res = await fetch(`/api/v1/debug/queue?user_id=${userId}`);
+        const data = await res.json();
+        workerIsAlive = !!data.worker_alive;
+        
+        const dot = document.getElementById('worker-dot');
+        const label = document.getElementById('worker-label');
+        if (dot && label) {
+            if (workerIsAlive) {
+                dot.style.background = '#10b981';
+                label.textContent = 'Worker Active (🟢)';
+                label.style.color = '#10b981';
+            } else {
+                dot.style.background = '#ef4444';
+                label.textContent = 'Worker Offline';
+                label.style.color = 'var(--text-3)';
+            }
+        }
+    } catch (e) {
+        workerIsAlive = false;
+    }
+}
+setInterval(checkWorkerHeartbeat, 5000);
+
 function startWorkerURI() {
     const userId = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1] || 'demo_user_123';
     window.location.href = `clipai://start?user_id=${userId}`;
     showToast('Starting local worker...', 'info');
+    setTimeout(checkWorkerHeartbeat, 2000);
 }
 
 // ─── In-App Video Player ───────────────────────────────────────────────────────
