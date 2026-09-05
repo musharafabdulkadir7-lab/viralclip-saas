@@ -297,12 +297,14 @@ async function loadWorkplaceClips() {
             const safeUrl = encodeURI(rawUrl);
             const rawFilename = rawUrl.split('/').pop() || '';
             const streamUrl = rawFilename ? `http://127.0.0.1:58921/${encodeURIComponent(rawFilename)}` : '';
-            const playUrl = isLive ? (c.youtube_url || '') : streamUrl;
-            
+            const mediaPreview = isLive && thumbUrl
+                ? `<img src="${thumbUrl}" style="width:100%; height:100%; object-fit:cover; opacity:0.85; transition:opacity 0.2s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.85'">`
+                : `<video src="${streamUrl}" preload="metadata" muted playsinline style="width:100%; height:100%; object-fit:cover; opacity:0.9;"></video>`;
+
             return `
             <div class="glass-card" style="display:flex; flex-direction:column; overflow:hidden; border-radius:14px; border:1px solid rgba(255,255,255,0.08); background:rgba(20,20,20,0.6);">
                 <div style="position:relative; aspect-ratio:9/16; background:#000; overflow:hidden; cursor:pointer;" onclick="openPlayer('${videoId}','${playUrl}','${title}')">
-                    <img src="${thumbUrl}" style="width:100%; height:100%; object-fit:cover; opacity:0.85; transition:opacity 0.2s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.85'">
+                    ${mediaPreview}
                     <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.25);">
                         <div style="width:48px; height:48px; border-radius:50%; background:rgba(220,38,38,0.9); display:flex; align-items:center; justify-content:center; box-shadow:0 4px 20px rgba(0,0,0,0.5);">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg>
