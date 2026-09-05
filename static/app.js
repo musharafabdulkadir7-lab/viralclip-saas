@@ -1,10 +1,26 @@
+// ─── User Session & Identifier ────────────────────────────────────────────────
+function getActiveUserId() {
+    let uid = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1];
+    if (!uid) {
+        uid = localStorage.getItem('clipai_user_id');
+    }
+    if (!uid) {
+        uid = 'user_43065'; // Default linked desktop account
+    }
+    localStorage.setItem('clipai_user_id', uid);
+    if (!document.cookie.split('; ').find(r => r.startsWith('user_id='))) {
+        document.cookie = `user_id=${uid};path=/;max-age=31536000;SameSite=Lax`;
+    }
+    return uid;
+}
+
 // ─── Worker Connection State ──────────────────────────────────────────────────
 let workerIsAlive = false;
 let workerIsStarting = false;
 
 async function checkWorkerHeartbeat() {
     try {
-        const userId = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1] || 'demo_user_123';
+        const userId = getActiveUserId();
         const res = await fetch(`/api/v1/debug/queue?user_id=${userId}`);
         const data = await res.json();
         workerIsAlive = !!data.worker_alive;
@@ -37,7 +53,7 @@ async function checkWorkerHeartbeat() {
 setInterval(checkWorkerHeartbeat, 3000);
 
 function startWorkerURI() {
-    const userId = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1] || 'demo_user_123';
+    const userId = getActiveUserId();
     workerIsStarting = true;
     
     const dot = document.getElementById('worker-dot');
@@ -273,8 +289,8 @@ async function loadWorkplaceClips() {
     const container = document.getElementById('workplace-clips-container');
     if (!container) return;
     try {
-        const userId = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1] || '';
-        const res = await fetch(`/api/v1/analytics${userId ? `?user_id=${userId}` : ''}`);
+        const userId = getActiveUserId();
+        const res = await fetch(`/api/v1/analytics?user_id=${userId}`);
         const data = await res.json();
         const allClips = data.videos || [];
         // Workplace shows unposted drafts waiting for review (clips without a live YouTube link)
@@ -449,8 +465,8 @@ let viewsChart = null;
 
 async function loadAnalytics() {
     try {
-        const userId = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1] || '';
-        const res = await fetch(`/api/v1/analytics${userId ? `?user_id=${userId}` : ''}`);
+        const userId = getActiveUserId();
+        const res = await fetch(`/api/v1/analytics?user_id=${userId}`);
         const data = await res.json();
 
         document.getElementById('stat-total-views').textContent = formatNumber(data.total_views);
