@@ -148,6 +148,20 @@ async def auto_post_scheduler():
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(auto_post_scheduler())
+    asyncio.create_task(keep_alive_ping())
+
+async def keep_alive_ping():
+    """Pings this server every 10 minutes to prevent Render free-tier cold starts."""
+    import httpx
+    await asyncio.sleep(60)  # Wait 1 min after startup before first ping
+    app_url = os.environ.get("RENDER_EXTERNAL_URL", "https://viralclip-saas.onrender.com")
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.get(f"{app_url}/health")
+        except Exception:
+            pass
+        await asyncio.sleep(600)  # Every 10 minutes
 
 # Static files and templates
 BASE_DIR = Path(__file__).resolve().parent
@@ -190,6 +204,10 @@ def get_or_create_user(user_id: str):
 @app.get("/")
 async def render_index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
+
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
 
 @app.get("/api/v1/auth/youtube/status")
 async def youtube_status(request: Request):
