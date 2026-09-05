@@ -240,8 +240,24 @@ async def get_user_profile(request: Request):
 async def update_user_profile(payload: UserProfileUpdate, request: Request, response: Response):
     user_id = request.cookies.get("user_id", "demo_user_123")
     email = payload.email.strip().lower()
-    if not email or "@" not in email:
-        raise HTTPException(status_code=400, detail="Invalid email address")
+    
+    # Strict regex format check (RFC compliant)
+    import re, socket
+    email_regex = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$'
+    if not re.match(email_regex, email) or len(email) < 6:
+        raise HTTPException(status_code=400, detail="Invalid email format. Please enter a genuine email address.")
+
+    domain = email.split('@')[1]
+    # Block obviously fake/trash test domains
+    blocked_domains = {"test.com", "example.com", "fake.com", "asdf.com", "mailinator.com", "tempmail.com", "throwaway.com", "123.com", "abc.com"}
+    if domain in blocked_domains or "." not in domain or len(domain.split('.')[-1]) < 2:
+        raise HTTPException(status_code=400, detail="Please enter a real, valid email provider (e.g. Gmail, Outlook, Yahoo).")
+
+    # Verify domain exists via DNS
+    try:
+        socket.gethostbyname(domain)
+    except socket.gaierror:
+        raise HTTPException(status_code=400, detail=f"The email domain '@{domain}' does not exist. Please check your spelling.")
     
     final_user_id = user_id
     license_tier = "free_tier"
