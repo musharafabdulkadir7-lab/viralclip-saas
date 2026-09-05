@@ -267,11 +267,11 @@ async function loadWorkplaceClips() {
         const res = await fetch('/api/v1/analytics');
         const data = await res.json();
         const allClips = data.videos || [];
-        // Workplace shows unposted drafts waiting for review; posted videos belong in My Clips
-        const workplaceClips = allClips.filter(c => !c.youtube_url || c.youtube_url.trim() === '');
+        // Workplace shows unposted drafts waiting for review (clips without a live YouTube link)
+        const workplaceClips = allClips.filter(c => !c.youtube_url || (!c.youtube_url.includes('youtube.com') && !c.youtube_url.includes('youtu.be')));
         
         if (workplaceClips.length === 0) {
-            container.innerHTML = '<div class="table-empty" style="grid-column: 1 / -1; padding: 48px 24px;">No draft clips waiting for review. All clips are live, or generate a new clip with auto-post turned off!</div>';
+            container.innerHTML = '<div class="table-empty" style="grid-column: 1 / -1; padding: 48px 24px;">No draft clips waiting for review. Generate a new clip with auto-post turned off!</div>';
             return;
         }
 
@@ -461,8 +461,13 @@ async function loadAnalytics() {
             galleryHeader.parentNode.insertBefore(chartContainer, galleryHeader);
         }
         
-        // Render video cards
-        galleryGrid.innerHTML = data.videos.map(v => {
+        // Render video cards (only live published clips appear in My Clips)
+        const publishedClips = (data.videos || []).filter(v => v.youtube_url && (v.youtube_url.includes('youtube.com') || v.youtube_url.includes('youtu.be')));
+        if (publishedClips.length === 0) {
+            galleryGrid.innerHTML = '<div class="table-empty" style="grid-column: 1 / -1;">No live YouTube clips yet. Review your drafts in Workplace to publish them!</div>';
+            return;
+        }
+        galleryGrid.innerHTML = publishedClips.map(v => {
             const rawId = v.youtube_url ? (v.youtube_url.split('shorts/')[1] || v.youtube_url.split('v=')[1] || '') : '';
             const videoId = rawId.split('?')[0];
             const thumbUrl = videoId
