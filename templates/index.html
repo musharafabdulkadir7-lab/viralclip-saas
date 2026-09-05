@@ -546,6 +546,11 @@
         <div style="aspect-ratio:9/16;border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,0.1);box-shadow:0 24px 80px rgba(0,0,0,0.8);background:#000;">
             <iframe id="player-iframe" src="" frameborder="0" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen style="width:100%;height:100%;display:none;"></iframe>
             <video id="player-video" controls autoplay playsinline style="width:100%;height:100%;object-fit:cover;display:none;"></video>
+            <div id="player-empty" style="display:none;width:100%;height:100%;padding:28px 20px;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:radial-gradient(circle at center, #1a2234 0%, #0a0e17 100%);">
+                <div style="font-size:42px;margin-bottom:12px;">🎬</div>
+                <div style="font-size:16px;font-weight:700;color:#fff;margin-bottom:6px;">Draft Video Saved</div>
+                <div style="font-size:12.5px;color:var(--text-3);line-height:1.5;">This clip was rendered and saved to your Workplace. Connect YouTube and click <strong>Post to YouTube</strong> to publish it and watch it live!</div>
+            </div>
         </div>
         <div id="player-info" style="margin-top:16px;padding:16px;background:rgba(255,255,255,0.05);border-radius:12px;border:1px solid rgba(255,255,255,0.08);">
             <div id="player-title" style="font-size:15px;font-weight:600;color:white;margin-bottom:8px;"></div>
@@ -558,7 +563,7 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="/static/app.js?v=108"></script>
+<script src="/static/app.js?v=109"></script>
 
 <!-- ── Brand Kit Modal ───────────────────────────────── -->
 <div id="brand-modal" class="brand-modal hidden">

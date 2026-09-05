@@ -88,7 +88,10 @@ function openPlayer(videoId, youtubeUrl, title) {
         }
     }
 
+    const emptyNotice = document.getElementById('player-empty');
+
     if (cleanYtId && cleanYtId !== 'TEST_ANALYTICS') {
+        if (emptyNotice) emptyNotice.style.display = 'none';
         if (iframe) {
             iframe.style.display = 'block';
             iframe.src = `https://www.youtube.com/embed/${cleanYtId}?autoplay=1&rel=0`;
@@ -98,7 +101,8 @@ function openPlayer(videoId, youtubeUrl, title) {
             video.pause();
             video.src = '';
         }
-    } else if (youtubeUrl) {
+    } else if (youtubeUrl && (youtubeUrl.startsWith('http') || youtubeUrl.startsWith('/') || youtubeUrl.startsWith('blob:'))) {
+        if (emptyNotice) emptyNotice.style.display = 'none';
         if (iframe) {
             iframe.style.display = 'none';
             iframe.src = '';
@@ -108,6 +112,18 @@ function openPlayer(videoId, youtubeUrl, title) {
             video.src = youtubeUrl;
             video.play().catch(() => {});
         }
+    } else {
+        // No playable streaming URL available yet
+        if (iframe) {
+            iframe.style.display = 'none';
+            iframe.src = '';
+        }
+        if (video) {
+            video.style.display = 'none';
+            video.pause();
+            video.src = '';
+        }
+        if (emptyNotice) emptyNotice.style.display = 'flex';
     }
 
     modal.classList.remove('hidden');
