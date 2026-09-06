@@ -24,16 +24,25 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# Ensure pystray and pillow are available
-try:
-    import pystray
-    from PIL import Image, ImageDraw
-    import winreg as reg
-except ImportError:
-    subprocess.run([sys.executable, "-m", "pip", "install", "pystray", "Pillow"], check=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    import pystray
-    from PIL import Image, ImageDraw
-    import winreg as reg
+# Ensure pystray and pillow are available (Windows desktop tray only)
+pystray = None
+Image = None
+ImageDraw = None
+reg = None
+
+if sys.platform == "win32" and "--cloud" not in sys.argv:
+    try:
+        import pystray
+        from PIL import Image, ImageDraw
+        import winreg as reg
+    except ImportError:
+        try:
+            subprocess.run([sys.executable, "-m", "pip", "install", "pystray", "Pillow"], check=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            import pystray
+            from PIL import Image, ImageDraw
+            import winreg as reg
+        except Exception:
+            pass
 
 # Setup cross-platform paths
 HOME_DIR = Path.home() / ".clipai"
