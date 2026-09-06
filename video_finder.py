@@ -179,7 +179,8 @@ def _search_via_ytdlp(niche: str, max_results: int = 15) -> list:
         "no_warnings": True, 
         "noplaylist": True, 
         "skip_download": True,
-        "ignoreerrors": True  # Skip age-restricted or unavailable videos
+        "ignoreerrors": True,
+        "extractor_args": {"youtube": {"player_client": ["android", "ios", "web"]}},
     }
     candidates = []
     last_error = None
