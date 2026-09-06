@@ -131,7 +131,12 @@ def update_yt_dlp():
     try:
         if not yt_dlp_exe.exists():
             print("yt-dlp not found. Downloading latest standalone binary...")
-            url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" if sys.platform == "win32" else "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos"
+            if sys.platform == "win32":
+                url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+            elif sys.platform == "darwin":
+                url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos"
+            else:
+                url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"
             response = requests.get(url, stream=True)
             with open(yt_dlp_exe, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
