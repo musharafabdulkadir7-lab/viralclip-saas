@@ -14,17 +14,15 @@ function getActiveUserId() {
     return uid;
 }
 
-// ─── Worker Connection State ──────────────────────────────────────────────────
-let workerIsAlive = false;
-let workerIsStarting = false;
+// ─── Cloud Worker Connection State ───────────────────────────────────────────
+let workerIsAlive = true; // Cloud worker on Oracle is active 24/7
 
 async function checkWorkerHeartbeat() {
     try {
         const userId = getActiveUserId();
-        const res = await fetch(`/api/v1/debug/queue?user_id=${userId}`);
+        const res = await fetch(`/api/v1/worker/heartbeat?user_id=${userId}`);
         const data = await res.json();
-        workerIsAlive = !!data.worker_alive;
-        if (workerIsAlive) workerIsStarting = false;
+        workerIsAlive = data.alive !== false;
         
         const dot = document.getElementById('worker-dot');
         const label = document.getElementById('worker-label');
@@ -32,25 +30,21 @@ async function checkWorkerHeartbeat() {
             if (workerIsAlive) {
                 dot.style.background = '#10b981';
                 dot.style.boxShadow = '0 0 10px rgba(16,185,129,0.5)';
-                label.textContent = 'Worker Active (🟢)';
+                label.textContent = 'Cloud Engine Active (🟢)';
                 label.style.color = '#10b981';
-            } else if (workerIsStarting) {
-                dot.style.background = '#f59e0b';
-                dot.style.boxShadow = '0 0 10px rgba(245,158,11,0.5)';
-                label.textContent = 'Worker Starting... (⏳)';
-                label.style.color = '#f59e0b';
             } else {
-                dot.style.background = '#ef4444';
+                dot.style.background = '#f59e0b';
                 dot.style.boxShadow = 'none';
-                label.textContent = 'Worker Offline';
-                label.style.color = 'var(--text-3)';
+                label.textContent = 'Cloud Engine Connecting...';
+                label.style.color = '#f59e0b';
             }
         }
     } catch (e) {
-        workerIsAlive = false;
+        // Default to active since cloud worker runs persistently
+        workerIsAlive = true;
     }
 }
-setInterval(checkWorkerHeartbeat, 3000);
+setInterval(checkWorkerHeartbeat, 8000);
 
 function startWorkerURI() {
     const userId = getActiveUserId();
@@ -193,19 +187,6 @@ function updateWorkerUI(alive) {
         label.textContent = 'Worker Offline';
     }
 }
-
-async function checkWorkerHeartbeat() {
-    try {
-        const userId = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1] || 'demo_user_123';
-        const res = await fetch(`/api/v1/worker/heartbeat?user_id=${userId}`);
-        const data = await res.json();
-        updateWorkerUI(data.alive);
-    } catch (e) {
-        updateWorkerUI(false);
-    }
-}
-setInterval(checkWorkerHeartbeat, 5000);
-
 // ─── Pipeline Step Indicator ──────────────────────────────────────────────────
 function updatePipelineSteps(pct) {
     // Steps: search (10%), download (25%), cut (60%), upload (85%)
@@ -943,13 +924,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const autoUploadToggle = document.getElementById('studio-autopost-toggle');
         const autoUpload = autoUploadToggle ? autoUploadToggle.checked : true;
         
-        // If worker is offline, tell them to start it
-        if (!workerIsAlive) {
-            addMessage('Director AI', '⚠️ **Worker is offline.** Please start the ClipAI_Worker.exe app on your computer before generating a clip. If you haven\'t downloaded it yet, you can download it from the top bar.');
-            showToast('Worker is offline', 'error');
-            return;
-        }
-
         const layout = document.getElementById('studio-layout-select')?.value || 'split_screen';
         const subtitleStyle = document.getElementById('studio-subtitle-select')?.value || 'hormozi';
 
