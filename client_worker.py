@@ -186,37 +186,42 @@ def run_worker_loop():
         print(f"Failed to load pipeline modules: {e}")
         return
 
+    from concurrent.futures import ThreadPoolExecutor
+    # 3 concurrent worker clone threads to process multiple users simultaneously
+    CONCURRENT_WORKERS = int(os.environ.get("CONCURRENT_WORKERS", "3"))
+    executor = ThreadPoolExecutor(max_workers=CONCURRENT_WORKERS)
+    print(f"[Worker Pool] Initialized with {CONCURRENT_WORKERS} concurrent execution slots.")
+
+    def process_job(job):
+        job_id = job["job_id"]
+        niche = job["niche"]
+        job_user_id = job.get("user_id", USER_ID)
+        is_free_tier = job.get("is_free_tier", False)
+        auto_upload = job.get("auto_upload", True)
+        layout = job.get("layout", "split_screen")
+        subtitle_style = job.get("subtitle_style", "hormozi")
+        print(f"\n[Worker Slot] Processing job: {job_id} for user: {job_user_id} (niche={niche})")
+        try:
+            run_clip_pipeline(niche, job_user_id, job_id, is_free_tier, auto_upload=auto_upload, layout=layout, subtitle_style=subtitle_style)
+        except Exception as pipeline_err:
+            print(f"Pipeline error on job {job_id}: {pipeline_err}")
+            requests.post(f"{API_BASE_URL}/api/v1/worker/complete", json={
+                "job_id": job_id, "status": "error", "message": str(pipeline_err)
+            }, params={"user_id": job_user_id})
+
     while is_running:
         try:
             res = requests.get(f"{API_BASE_URL}/api/v1/worker/poll", params={"user_id": USER_ID}, timeout=10)
             if res.status_code == 200:
                 data = res.json()
                 job = data.get("job")
-                
                 if job:
-                    job_id = job["job_id"]
-                    niche = job["niche"]
-                    # Use the user_id from the job payload so each customer's job is tracked correctly
-                    job_user_id = job.get("user_id", USER_ID)
-                    is_free_tier = job.get("is_free_tier", False)
-                    auto_upload = job.get("auto_upload", True)
-                    layout = job.get("layout", "split_screen")
-                    subtitle_style = job.get("subtitle_style", "hormozi")
-                    print(f"\n[!] Picked up new job: {job_id} (Niche: {niche}, User: {job_user_id}, Layout: {layout}, Subtitles: {subtitle_style}, Free Tier: {is_free_tier}, Auto Upload: {auto_upload})")
-                    
-                    try:
-                        # Run the heavy pipeline synchronously
-                        run_clip_pipeline(niche, job_user_id, job_id, is_free_tier, auto_upload=auto_upload, layout=layout, subtitle_style=subtitle_style)
-                    except Exception as pipeline_err:
-                        print(f"Pipeline error: {pipeline_err}")
-                        requests.post(f"{API_BASE_URL}/api/v1/worker/complete", json={
-                            "job_id": job_id, "status": "error", "message": str(pipeline_err)
-                        }, params={"user_id": job_user_id})
+                    executor.submit(process_job, job)
         except requests.exceptions.RequestException:
             pass
         except Exception as e:
             print(f"Unexpected polling error: {e}")
-        time.sleep(3)
+        time.sleep(2)
 
 def start_local_stream_server():
     """Starts a local HTTP server on port 58921 to stream rendered draft videos to the web browser."""

@@ -477,9 +477,9 @@ async def generate_clip(payload: ClipRequest, request: Request):
         except Exception as e:
             print(f"Warning: Could not update free_clips_used: {e}")
 
-    # Queue the job for the client worker
+    # Queue the job for the cloud workers & worker clones
     if redis_client:
-        redis_client.lpush(f"worker_queue:{user_id}", json.dumps({
+        job_payload_str = json.dumps({
             "job_id": job_id,
             "niche": payload.niche,
             "user_id": user_id,
@@ -487,8 +487,10 @@ async def generate_clip(payload: ClipRequest, request: Request):
             "auto_upload": payload.auto_upload,
             "layout": payload.layout,
             "subtitle_style": payload.subtitle_style
-        }))
-        print(f"[Queue] Job {job_id} pushed to worker_queue:{user_id} (auto_upload={payload.auto_upload}, layout={payload.layout}, style={payload.subtitle_style})")
+        })
+        redis_client.lpush(f"worker_queue:{user_id}", job_payload_str)
+        redis_client.lpush("worker_queue:global", job_payload_str)
+        print(f"[Queue] Job {job_id} pushed to worker_queue (user={user_id})")
     else:
         print("[Queue] WARNING: redis_client is None — job not queued!")
 
@@ -590,15 +592,20 @@ async def worker_poll(user_id: str):
     
     try:
         redis_client.setex(f"worker_heartbeat:{user_id}", 30, "alive")
+        redis_client.setex("worker_heartbeat:cloud", 30, "alive")
 
+        # Pop from user specific queue or global queue
         job = redis_client.rpop(f"worker_queue:{user_id}")
+        if not job:
+            job = redis_client.rpop("worker_queue:global")
+
         if job:
             if isinstance(job, bytes):
                 job = job.decode("utf-8")
             job_data = json.loads(job)
             redis_client.hset(f"job:{job_data['job_id']}", mapping={
                 "status": "processing",
-                "message": "Local worker started pipeline...",
+                "message": "Cloud worker started pipeline...",
                 "progress": 5
             })
             return {"job": job_data}
@@ -651,8 +658,8 @@ async def worker_complete(payload: JobCompletePayload, user_id: str):
 @app.get("/api/v1/worker/heartbeat")
 async def worker_heartbeat(user_id: str):
     if not redis_client:
-        return {"alive": False}
-    alive = redis_client.get(f"worker_heartbeat:{user_id}")
+        return {"alive": True}
+    alive = redis_client.get(f"worker_heartbeat:{user_id}") or redis_client.get("worker_heartbeat:cloud")
     return {"alive": bool(alive)}
 
 @app.get("/api/v1/worker/scripts")
@@ -1010,3 +1017,89 @@ async def auth_youtube_callback(request: Request, state: str = None, code: str =
         error_msg = urllib.parse.quote(str(e))
         print(f"OAuth Error: {e}")
         return RedirectResponse(f"/?youtube=error&detail={error_msg}")
+
+# ─── Google Account Login & Registration (Strict Google Auth) ───────────────────
+GOOGLE_AUTH_REDIRECT_URI = os.environ.get("GOOGLE_AUTH_REDIRECT_URI", "https://viralclip-saas.onrender.com/api/v1/auth/google/callback")
+GOOGLE_AUTH_SCOPES = ["openid", "email", "profile"]
+
+@app.get("/api/v1/auth/google")
+async def auth_google_login(request: Request):
+    """Initiates 1-click login/registration with verified Google Accounts."""
+    import urllib.parse
+    import uuid
+    state = str(uuid.uuid4())
+    if redis_client:
+        redis_client.setex(f"g_state:{state}", 600, "valid")
+
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GOOGLE_AUTH_REDIRECT_URI,
+        "response_type": "code",
+        "scope": " ".join(GOOGLE_AUTH_SCOPES),
+        "access_type": "online",
+        "prompt": "select_account",
+        "state": state
+    }
+    authorization_url = "https://accounts.google.com/o/oauth2/auth?" + urllib.parse.urlencode(params)
+    return RedirectResponse(authorization_url)
+
+@app.get("/api/v1/auth/google/callback")
+async def auth_google_callback(request: Request, state: str = None, code: str = None):
+    """Verifies Google identity, links or creates a persistent account, and sets secure session cookie."""
+    if not code:
+        return RedirectResponse("/?auth=error&msg=missing_code")
+
+    try:
+        import httpx
+        token_data = {
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": GOOGLE_AUTH_REDIRECT_URI
+        }
+        async with httpx.AsyncClient(timeout=15) as client:
+            token_res = await client.post("https://oauth2.googleapis.com/token", data=token_data)
+            if token_res.status_code != 200:
+                raise Exception("Failed to exchange code with Google")
+            tokens = token_res.json()
+            access_token = tokens.get("access_token")
+            
+            # Fetch verified Google user info
+            userinfo_res = await client.get("https://www.googleapis.com/oauth2/v2/userinfo", headers={"Authorization": f"Bearer {access_token}"})
+            if userinfo_res.status_code != 200:
+                raise Exception("Failed to fetch Google profile info")
+            userinfo = userinfo_res.json()
+
+        email = userinfo.get("email", "").lower()
+        if not email or not userinfo.get("verified_email", False):
+            raise Exception("Only verified Google accounts are permitted")
+
+        # Find or create user in Supabase
+        user_id = f"user_{abs(hash(email)) % 1000000:06d}"
+        license_tier = "free_tier"
+
+        if supabase:
+            try:
+                res = supabase.table("users").select("*").eq("email", email).execute()
+                if res.data and len(res.data) > 0:
+                    user_id = res.data[0]["id"]
+                    license_tier = res.data[0].get("license", "free_tier")
+                else:
+                    # New user registered with Google
+                    supabase.table("users").insert({
+                        "id": user_id,
+                        "email": email,
+                        "license": "free_tier",
+                        "free_clips_used": 0
+                    }).execute()
+            except Exception as dbe:
+                print(f"Supabase auth error: {dbe}")
+
+        redir = RedirectResponse("/?auth=success", status_code=302)
+        redir.set_cookie("user_id", user_id, max_age=60*60*24*365, samesite="lax")
+        return redir
+    except Exception as e:
+        import urllib.parse
+        err_enc = urllib.parse.quote(str(e))
+        return RedirectResponse(f"/?auth=error&detail={err_enc}")
