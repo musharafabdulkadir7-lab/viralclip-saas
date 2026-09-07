@@ -164,7 +164,7 @@ def _search_via_api(niche: str, max_results: int = 20) -> list:
 
 
 def _search_via_ytdlp(niche: str, max_results: int = 15) -> list:
-    """Fallback: use yt-dlp (may be blocked on cloud IPs)."""
+    """Fallback: use yt-dlp with client rotation (ios, android, tv, mweb)."""
     import yt_dlp
     used = load_used_videos()
 
@@ -174,48 +174,61 @@ def _search_via_ytdlp(niche: str, max_results: int = 15) -> list:
     search_query = f"ytsearch{max_results}:{query}"
     log(f"[VideoFinder] yt-dlp fallback search: '{query}'")
 
-    ydl_opts = {
-        "quiet": True, 
-        "no_warnings": True, 
-        "noplaylist": True, 
-        "skip_download": True,
-        "ignoreerrors": True,
-        "extractor_args": {"youtube": {"player_client": ["android", "ios", "web"]}},
-    }
+    # Rotate client extractors to bypass cloud IP bot blocks
+    client_profiles = [
+        ["ios"],
+        ["android"],
+        ["mweb"],
+        ["tv"],
+        ["web_creator"]
+    ]
+
     candidates = []
     last_error = None
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(search_query, download=False)
-            entries = info.get("entries", []) if info else []
-            for entry in entries:
-                if not entry:
-                    continue
-                vid_id = entry.get("id") or ""
-                duration = entry.get("duration") or 0
-                view_count = entry.get("view_count") or 0
-                title = _safe(entry.get("title", ""))[:60]
+    for client_profile in client_profiles:
+        ydl_opts = {
+            "quiet": True, 
+            "no_warnings": True, 
+            "noplaylist": True, 
+            "skip_download": True,
+            "ignoreerrors": True,
+            "extractor_args": {"youtube": {"player_client": client_profile}},
+        }
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(search_query, download=False)
+                entries = info.get("entries", []) if info else []
+                for entry in entries:
+                    if not entry:
+                        continue
+                    vid_id = entry.get("id") or ""
+                    duration = entry.get("duration") or 0
+                    view_count = entry.get("view_count") or 0
+                    title = _safe(entry.get("title", ""))[:60]
 
-                uploader = _safe(entry.get("uploader", ""))
-                if is_copyright_risk(title, uploader):
-                    continue
+                    uploader = _safe(entry.get("uploader", ""))
+                    if is_copyright_risk(title, uploader):
+                        continue
 
-                if vid_id in used:
-                    continue
-                if duration < MIN_DURATION_SEC or view_count < MIN_VIEWS:
-                    continue
+                    if vid_id in used:
+                        continue
+                    if duration < MIN_DURATION_SEC or view_count < MIN_VIEWS:
+                        continue
 
-                candidates.append({
-                    "url": entry.get("webpage_url") or f"https://www.youtube.com/watch?v={vid_id}",
-                    "title": title,
-                    "duration": duration,
-                    "view_count": view_count,
-                    "id": vid_id,
-                })
-    except Exception as e:
-        last_error = str(e)
-        log(f"[VideoFinder] yt-dlp error: {e}")
+                    candidates.append({
+                        "url": entry.get("webpage_url") or f"https://www.youtube.com/watch?v={vid_id}",
+                        "title": title,
+                        "duration": duration,
+                        "view_count": view_count,
+                        "id": vid_id,
+                    })
+            if candidates:
+                log(f"[VideoFinder] Successfully retrieved {len(candidates)} candidates via client profile: {client_profile}")
+                break
+        except Exception as e:
+            last_error = str(e)
+            log(f"[VideoFinder] yt-dlp error with client {client_profile}: {e}")
 
     if not candidates and last_error:
         raise Exception(f"yt-dlp search failed: {last_error}")

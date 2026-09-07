@@ -86,8 +86,8 @@ def download_video_and_subs(url: str, video_id: str) -> dict:
         "http_chunk_size": 31457280,
         "nocheckcertificate": True,
         "ffmpeg_location": ffmpeg_exe,
-        # Fast streaming client profiles
-        "extractor_args": {"youtube": {"player_client": ["android", "ios", "web"]}},
+        # Rotating client profiles to bypass cloud IP bot blocks
+        "extractor_args": {"youtube": {"player_client": ["ios", "android", "mweb", "tv"]}},
     }
 
     if cookies_file:
