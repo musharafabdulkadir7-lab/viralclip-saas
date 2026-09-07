@@ -734,12 +734,24 @@ async function openAccountModal() {
     try {
         const res = await fetch('/api/v1/user/profile');
         const data = await res.json();
-        const emailInput = document.getElementById('account-email-input');
         const planBadge = document.getElementById('account-plan-badge');
         const userIdSpan = document.getElementById('account-user-id');
         const workerStatusEl = document.getElementById('account-worker-status');
+        const loggedInBox = document.getElementById('account-logged-in-box');
+        const loginBox = document.getElementById('account-login-box');
+        const userEmailEl = document.getElementById('account-user-email');
+        const avatarLetter = document.getElementById('account-avatar-letter');
         
-        if (emailInput) emailInput.value = data.email || '';
+        if (data.email) {
+            if (loggedInBox) loggedInBox.style.display = 'block';
+            if (loginBox) loginBox.style.display = 'none';
+            if (userEmailEl) userEmailEl.textContent = data.email;
+            if (avatarLetter) avatarLetter.textContent = data.email[0].toUpperCase();
+        } else {
+            if (loggedInBox) loggedInBox.style.display = 'none';
+            if (loginBox) loginBox.style.display = 'block';
+        }
+
         if (planBadge) planBadge.textContent = (data.license || 'free_tier').replace('_', ' ').toUpperCase();
         if (userIdSpan) userIdSpan.textContent = data.user_id || '';
         if (workerStatusEl) {
