@@ -998,8 +998,34 @@ async def auth_youtube_callback(request: Request, state: str = None, code: str =
         token_json = r.json()
         access_token = token_json.get("access_token")
         refresh_token = token_json.get("refresh_token")
+
+        # ── Branch: If state is for Google Account Login / Registration ─────────
+        if state.startswith("login_"):
+            userinfo_res = httpx.get("https://www.googleapis.com/oauth2/v2/userinfo", headers={"Authorization": f"Bearer {access_token}"})
+            if userinfo_res.status_code == 200:
+                userinfo = userinfo_res.json()
+                email = userinfo.get("email", "").lower()
+                if email and userinfo.get("verified_email", False):
+                    login_user_id = f"user_{abs(hash(email)) % 1000000:06d}"
+                    if supabase:
+                        try:
+                            res = supabase.table("users").select("*").eq("email", email).execute()
+                            if res.data and len(res.data) > 0:
+                                login_user_id = res.data[0]["id"]
+                            else:
+                                supabase.table("users").insert({
+                                    "id": login_user_id,
+                                    "email": email,
+                                    "license": "free_tier",
+                                    "free_clips_used": 0
+                                }).execute()
+                        except Exception as dbe:
+                            print(f"Supabase login save error: {dbe}")
+                    redir = RedirectResponse("/?auth=success", status_code=302)
+                    redir.set_cookie("user_id", login_user_id, max_age=60*60*24*365, samesite="lax")
+                    return redir
         
-        # Save to Supabase
+        # ── Branch: YouTube Channel Connection ─────────────────────────────────
         if supabase:
             update_data = {
                 "youtube_access_token": access_token,
@@ -1019,21 +1045,20 @@ async def auth_youtube_callback(request: Request, state: str = None, code: str =
         return RedirectResponse(f"/?youtube=error&detail={error_msg}")
 
 # ─── Google Account Login & Registration (Strict Google Auth) ───────────────────
-GOOGLE_AUTH_REDIRECT_URI = os.environ.get("GOOGLE_AUTH_REDIRECT_URI", "https://viralclip-saas.onrender.com/api/v1/auth/google/callback")
 GOOGLE_AUTH_SCOPES = ["openid", "email", "profile"]
 
 @app.get("/api/v1/auth/google")
 async def auth_google_login(request: Request):
-    """Initiates 1-click login/registration with verified Google Accounts."""
+    """Initiates 1-click login/registration with verified Google Accounts using the authorized callback."""
     import urllib.parse
     import uuid
-    state = str(uuid.uuid4())
+    state = f"login_{uuid.uuid4()}"
     if redis_client:
-        redis_client.setex(f"g_state:{state}", 600, "valid")
+        redis_client.setex(f"oauth_state:{state}", 600, "google_login")
 
     params = {
         "client_id": GOOGLE_CLIENT_ID,
-        "redirect_uri": GOOGLE_AUTH_REDIRECT_URI,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
         "response_type": "code",
         "scope": " ".join(GOOGLE_AUTH_SCOPES),
         "access_type": "online",
