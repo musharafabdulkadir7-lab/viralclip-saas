@@ -1,15 +1,19 @@
-// ─── User Session & Identifier ────────────────────────────────────────────────
+// ─── User Session & Identifier (Permanent Local Machine Memory) ─────────────────
 function getActiveUserId() {
-    let uid = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1];
+    let uid = localStorage.getItem('clipai_user_id');
     if (!uid) {
-        uid = localStorage.getItem('clipai_user_id');
+        uid = document.cookie.split('; ').find(r => r.startsWith('user_id='))?.split('=')[1];
     }
+    if (uid && uid !== 'demo_user_123' && uid !== 'undefined') {
+        localStorage.setItem('clipai_user_id', uid);
+        document.cookie = `user_id=${uid};path=/;max-age=315360000;SameSite=Lax`;
+        return uid;
+    }
+    // Only if brand new visitor without session
     if (!uid) {
-        uid = 'user_43065'; // Default linked desktop account
-    }
-    localStorage.setItem('clipai_user_id', uid);
-    if (!document.cookie.split('; ').find(r => r.startsWith('user_id='))) {
-        document.cookie = `user_id=${uid};path=/;max-age=31536000;SameSite=Lax`;
+        uid = `user_${Math.floor(100000 + Math.random() * 900000)}`;
+        localStorage.setItem('clipai_user_id', uid);
+        document.cookie = `user_id=${uid};path=/;max-age=315360000;SameSite=Lax`;
     }
     return uid;
 }
@@ -820,18 +824,43 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Load saved brand kit settings
     loadBrandKit();
 
-    // Check existing account profile
+    // Check existing account profile and permanently persist user_id
     try {
         const res = await fetch('/api/v1/user/profile');
         const data = await res.json();
+        if (data.user_id) {
+            localStorage.setItem('clipai_user_id', data.user_id);
+            document.cookie = `user_id=${data.user_id};path=/;max-age=315360000;SameSite=Lax`;
+        }
         if (data.email) {
             const userLabel = document.getElementById('user-display-label');
             if (userLabel) userLabel.textContent = data.email.split('@')[0];
         }
     } catch (e) {}
 
-    // Handle YouTube OAuth redirect
+    // Handle Google Auth & YouTube OAuth redirects
     const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('auth') === 'success') {
+        window.history.replaceState({}, '', window.location.pathname);
+        showToast('Signed in with Google successfully!');
+        try {
+            const pRes = await fetch('/api/v1/user/profile');
+            const pData = await pRes.json();
+            if (pData.user_id) {
+                localStorage.setItem('clipai_user_id', pData.user_id);
+                document.cookie = `user_id=${pData.user_id};path=/;max-age=315360000;SameSite=Lax`;
+            }
+            if (pData.email) {
+                const userLabel = document.getElementById('user-display-label');
+                if (userLabel) userLabel.textContent = pData.email.split('@')[0];
+            }
+        } catch (e) {}
+    } else if (urlParams.get('auth') === 'error') {
+        const detail = urlParams.get('detail') || 'Google sign-in was canceled';
+        showToast('Google login error: ' + detail, 'error');
+        window.history.replaceState({}, '', window.location.pathname);
+    }
+
     if (urlParams.get('youtube') === 'connected') {
         localStorage.setItem('youtube_connected', 'true');
         window.history.replaceState({}, '', window.location.pathname);
@@ -840,21 +869,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         const detail = urlParams.get('detail') || 'Unknown error';
         showToast('YouTube connection failed: ' + detail, 'error');
         window.history.replaceState({}, '', window.location.pathname);
-    }
-
-    // Check YouTube status from server
-    try {
-        const res = await fetch('/api/v1/auth/youtube/status');
-        const data = await res.json();
-        if (data.connected) localStorage.setItem('youtube_connected', 'true');
-        updateYouTubeUI(data.connected);
-    } catch (e) {
-        updateYouTubeUI(localStorage.getItem('youtube_connected') === 'true');
-    }
-
-    // Set user cookie
-    if (!document.cookie.split('; ').find(r => r.startsWith('user_id='))) {
-        document.cookie = `user_id=user_${Math.floor(Math.random()*100000)};path=/;max-age=31536000`;
     }
 
     // Resume polling if a job was running before page refresh
