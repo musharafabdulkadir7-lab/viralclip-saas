@@ -117,19 +117,22 @@ def run_clip_pipeline(niche: str, user_id: str, job_id: str, is_free_tier: bool 
                 update_job_status(job_id, "error", 0, "No viral video found matching criteria.", user_id=user_id)
                 return
 
-            # Prioritize the single top candidate
+            # Try all candidates in order — skip any that fail (bot-blocked, unavailable, etc.)
+            dl = {"error": "No candidates attempted"}
             video = candidates[0]
-            update_job_status(job_id, "running", 25, f"Downloading: {video['title'][:45]}...", user_id=user_id)
-            dl = video_downloader.download_video_and_subs(video["url"], video["id"])
-            
-            # Fallback to second candidate only if first failed download
-            if not dl.get("video_path") and len(candidates) > 1:
-                video = candidates[1]
-                update_job_status(job_id, "running", 30, f"Downloading alternative: {video['title'][:45]}...", user_id=user_id)
-                dl = video_downloader.download_video_and_subs(video["url"], video["id"])
+            for i, candidate in enumerate(candidates):
+                pct = 25 + i * 5
+                label = "Downloading" if i == 0 else f"Trying alternative {i}"
+                update_job_status(job_id, "running", pct, f"{label}: {candidate['title'][:45]}...", user_id=user_id)
+                dl = video_downloader.download_video_and_subs(candidate["url"], candidate["id"])
+                if dl.get("video_path"):
+                    video = candidate
+                    break
+                err = dl.get("error", "")
+                print(f"[Worker] Candidate {i+1} failed ({err[:80]}), trying next...")
 
             if not dl.get("video_path"):
-                err = dl.get("error", "Download failed")
+                err = dl.get("error", "All candidates failed to download")
                 update_job_status(job_id, "error", 0, f"Download failed: {err}", user_id=user_id)
                 return
 

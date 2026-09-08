@@ -27,18 +27,26 @@ def _get_ffmpeg_exe() -> str:
 
 
 def _write_cookies_file() -> str:
-    """Write YOUTUBE_COOKIES env var to a temp file for yt-dlp to use."""
+    """Return path to a YouTube cookies file for yt-dlp to use.
+    Checks (in order):
+      1. YOUTUBE_COOKIES_FILE — direct path to an existing file on disk
+      2. YOUTUBE_COOKIES — raw Netscape cookie content in env var
+    """
+    # 1. Direct file path (preferred — set on Oracle VM via systemd)
+    cookies_file_path = os.environ.get("YOUTUBE_COOKIES_FILE", "")
+    if cookies_file_path and os.path.exists(cookies_file_path):
+        print(f"[Downloader] Using YouTube cookies file: {cookies_file_path}")
+        return cookies_file_path
+
+    # 2. Raw cookie content in env var (Render / cloud dashboard fallback)
     cookies_content = os.environ.get("YOUTUBE_COOKIES", "")
     if not cookies_content:
         return ""
-    
-    # Cloud dashboards often escape newlines into literal '\n' strings. Fix it:
     cookies_content = cookies_content.replace("\\n", "\n").replace("\\t", "\t")
-    
     cookies_path = "/tmp/youtube_cookies.txt" if sys.platform != "win32" else os.path.join(os.environ.get("TEMP", "."), "youtube_cookies.txt")
     with open(cookies_path, "w", encoding="utf-8") as f:
         f.write(cookies_content)
-    print("[Downloader] Using YouTube cookies from environment.")
+    print("[Downloader] Using YouTube cookies from environment variable.")
     return cookies_path
 
 
