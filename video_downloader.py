@@ -88,10 +88,10 @@ def download_video_and_subs(url: str, video_id: str) -> dict:
         "no_warnings": True,
         "noplaylist": True,
         "merge_output_format": "mp4",
-        # Speed optimizations: parallel chunk streaming & buffer expansion
-        "concurrent_fragment_downloads": 16,
-        "buffersize": 4194304,
-        "http_chunk_size": 31457280,
+        # Robust networking settings to prevent socket drops and transport errors
+        "retries": 10,
+        "fragment_retries": 10,
+        "skip_unavailable_fragments": False,
         "nocheckcertificate": True,
         "ffmpeg_location": ffmpeg_exe,
         # Rotating client profiles to bypass cloud IP bot blocks
