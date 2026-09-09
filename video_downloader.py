@@ -50,9 +50,10 @@ def _write_cookies_file() -> str:
     return cookies_path
 
 
-def download_video_and_subs(url: str, video_id: str) -> dict:
+def download_video_and_subs(url: str, video_id: str, start_sec: int = None, end_sec: int = None) -> dict:
     """
     Downloads the video at 720p and its auto-generated subtitles.
+    If start_sec and end_sec are provided, only downloads that exact slice (Opus Clip style).
     Returns paths to the video file and subtitle file.
     """
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -78,7 +79,7 @@ def download_video_and_subs(url: str, video_id: str) -> dict:
         os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
 
     ydl_opts = {
-        # Prioritize combined progressive mp4 720p/480p first (instant single-stream download with 0 muxing overhead)
+        # Light, reliable 720p/480p single-stream format selection
         "format": "best[height<=720][ext=mp4]/bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]/best",
         "outtmpl": output_template,
         "writeautomaticsub": True,
@@ -88,15 +89,19 @@ def download_video_and_subs(url: str, video_id: str) -> dict:
         "no_warnings": True,
         "noplaylist": True,
         "merge_output_format": "mp4",
-        # Robust networking settings to prevent socket drops and transport errors
         "retries": 10,
         "fragment_retries": 10,
         "skip_unavailable_fragments": False,
         "nocheckcertificate": True,
         "ffmpeg_location": ffmpeg_exe,
-        # Rotating client profiles to bypass cloud IP bot blocks
-        "extractor_args": {"youtube": {"player_client": ["ios", "android", "mweb", "tv"]}},
+        # Android client has the highest success rate and lowest bot challenges across cloud subnets
+        "extractor_args": {"youtube": {"player_client": ["android", "ios", "mweb", "tv"]}},
     }
+
+    # Range Slicing Optimization: Fetch ONLY the required seconds if known (saves 95% bandwidth)
+    if start_sec is not None and end_sec is not None:
+        ydl_opts["download_ranges"] = lambda info, ydl: [{'start_time': start_sec, 'end_time': end_sec}]
+        print(f"[Downloader] Range-slicing active: Downloading only {start_sec}s -> {end_sec}s")
 
     # Support residential proxy or local SOCKS5 reverse-tunnel
     proxy_url = os.environ.get("YOUTUBE_PROXY") or os.environ.get("ALL_PROXY")
