@@ -186,6 +186,16 @@ def _search_via_ytdlp(niche: str, max_results: int = 15) -> list:
     candidates = []
     last_error = None
 
+    # Support residential proxy or local SOCKS5 reverse-tunnel
+    proxy_url = os.environ.get("YOUTUBE_PROXY") or os.environ.get("ALL_PROXY")
+    if not proxy_url:
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.5)
+        if s.connect_ex(('127.0.0.1', 1080)) == 0:
+            proxy_url = "socks5h://127.0.0.1:1080"
+        s.close()
+
     for client_profile in client_profiles:
         ydl_opts = {
             "quiet": True, 
@@ -195,6 +205,8 @@ def _search_via_ytdlp(niche: str, max_results: int = 15) -> list:
             "ignoreerrors": True,
             "extractor_args": {"youtube": {"player_client": client_profile}},
         }
+        if proxy_url:
+            ydl_opts["proxy"] = proxy_url
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(search_query, download=False)
