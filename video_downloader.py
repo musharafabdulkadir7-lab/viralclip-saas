@@ -98,6 +98,22 @@ def download_video_and_subs(url: str, video_id: str) -> dict:
         "extractor_args": {"youtube": {"player_client": ["ios", "android", "mweb", "tv"]}},
     }
 
+    # Support residential proxy or local SOCKS5 reverse-tunnel
+    proxy_url = os.environ.get("YOUTUBE_PROXY") or os.environ.get("ALL_PROXY")
+    if not proxy_url:
+        # Check if local reverse tunnel SOCKS5 port 1080 is active
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.5)
+        if s.connect_ex(('127.0.0.1', 1080)) == 0:
+            proxy_url = "socks5h://127.0.0.1:1080"
+            print("[Downloader] Detected active reverse-tunnel proxy on port 1080.")
+        s.close()
+
+    if proxy_url:
+        ydl_opts["proxy"] = proxy_url
+        print(f"[Downloader] Routing download through proxy: {proxy_url}")
+
     if cookies_file:
         ydl_opts["cookiefile"] = cookies_file
 
