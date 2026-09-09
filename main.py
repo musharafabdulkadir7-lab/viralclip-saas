@@ -21,6 +21,7 @@ STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "whsec_mock")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://your-supabase-url.supabase.co")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "your-supabase-service-key")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+REDIS_URL_2 = os.environ.get("REDIS_URL_2", "")  # Secondary database for failover
 
 # Security Token Signing Secret
 WORKER_SECRET = os.environ.get("WORKER_SECRET", "clipai_worker_sec_997f7c9_v2")
@@ -65,9 +66,58 @@ except Exception as e:
     print(f"Supabase init error: {e}")
     supabase = None
 
+class DualRedisClient:
+    """
+    Dual-database Redis client with automatic failover.
+    Tries primary DB first. If quota is exceeded, auto-switches to secondary.
+    Effectively doubles monthly command budget across two free Upstash databases.
+    """
+    def __init__(self, primary_url: str, secondary_url: str = ""):
+        self._primary = None
+        self._secondary = None
+        self._active = None
+        try:
+            c = redis.Redis.from_url(primary_url, decode_responses=True, socket_connect_timeout=3)
+            c.ping()
+            self._primary = c
+            self._active = c
+            print("[Redis] Primary database connected.")
+        except Exception as e:
+            print(f"[Redis] Primary connection failed: {e}")
+        if secondary_url:
+            try:
+                c2 = redis.Redis.from_url(secondary_url, decode_responses=True, socket_connect_timeout=3)
+                c2.ping()
+                self._secondary = c2
+                if not self._active:
+                    self._active = c2
+                print("[Redis] Secondary database connected (failover ready).")
+            except Exception as e:
+                print(f"[Redis] Secondary connection failed: {e}")
+
+    def _exec(self, method: str, *args, **kwargs):
+        clients = [c for c in [self._primary, self._secondary] if c]
+        last_err = None
+        for client in clients:
+            try:
+                return getattr(client, method)(*args, **kwargs)
+            except Exception as e:
+                last_err = e
+                err_str = str(e).lower()
+                if any(k in err_str for k in ["max monthly", "quota", "limit exceeded", "maxmemory"]):
+                    print(f"[Redis] Quota exceeded, failing over to secondary DB...")
+                    continue
+                raise
+        raise last_err
+
+    def __getattr__(self, name):
+        return lambda *args, **kwargs: self._exec(name, *args, **kwargs)
+
 try:
-    redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
-    redis_client.ping()
+    redis_client = DualRedisClient(REDIS_URL, REDIS_URL_2)
+    if not redis_client._active:
+        print("[Redis] No databases available.")
+        redis_client = None
 except Exception as e:
     print(f"Redis init error: {e}")
     redis_client = None
