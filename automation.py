@@ -14,6 +14,7 @@ import os
 import json
 import random
 import httpx
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -44,15 +45,47 @@ def is_copyright_risk(title: str, channel_title: str = "") -> bool:
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 
 
-def _safe(text: str) -> str:
-    return text.encode("ascii", errors="replace").decode("ascii")
+def _safe(text) -> str:
+    """UTF-8 safe — preserves emojis and non-English titles for logging."""
+    import sys
+    val = str(text) if text is not None else ""
+    try:
+        enc = getattr(sys.stdout, "encoding", None) or "utf-8"
+        val.encode(enc)
+        return val
+    except Exception:
+        return val.encode("utf-8", errors="replace").decode("utf-8")
 
 
 def log(msg: str):
     print(_safe(str(msg)))
 
 
+USED_VIDEOS_REDIS_KEY = "viralclip:used_videos"
+_redis_used_client = None
+
+def _get_used_redis():
+    global _redis_used_client
+    if _redis_used_client is None:
+        try:
+            import redis as _rl
+            c = _rl.Redis.from_url(
+                os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
+                decode_responses=True, socket_connect_timeout=2
+            )
+            c.ping()
+            _redis_used_client = c
+        except Exception:
+            _redis_used_client = False
+    return _redis_used_client if _redis_used_client else None
+
 def load_used_videos() -> dict:
+    r = _get_used_redis()
+    if r:
+        try:
+            return {vid: {} for vid in r.smembers(USED_VIDEOS_REDIS_KEY)}
+        except Exception:
+            pass
     if os.path.exists(USED_VIDEOS_FILE):
         try:
             with open(USED_VIDEOS_FILE, "r") as f:
@@ -61,13 +94,20 @@ def load_used_videos() -> dict:
             return {}
     return {}
 
-
-def mark_video_used(video_id: str, title: str):
+def mark_video_used(video_id: str, title: str = ""):
+    r = _get_used_redis()
+    if r:
+        try:
+            r.sadd(USED_VIDEOS_REDIS_KEY, video_id)
+            log(f"[VideoFinder] Marked used (Redis): {video_id}")
+            return
+        except Exception:
+            pass
     used = load_used_videos()
     used[video_id] = {"title": title, "used_at": datetime.now().isoformat()}
     with open(USED_VIDEOS_FILE, "w") as f:
         json.dump(used, f, indent=2)
-    log(f"[VideoFinder] Marked as used: {video_id} -- '{_safe(title)[:50]}'")
+    log(f"[VideoFinder] Marked used (JSON fallback): {video_id}")
 
 
 def _iso8601_to_seconds(duration: str) -> int:
@@ -195,13 +235,7 @@ def _search_via_ytdlp(niche: str, max_results: int = 15) -> list:
 
     # Support residential proxy or local SOCKS5 reverse-tunnel
     proxy_url = os.environ.get("YOUTUBE_PROXY") or os.environ.get("ALL_PROXY")
-    if not proxy_url:
-        import socket
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(0.5)
-        if s.connect_ex(('127.0.0.1', 1080)) == 0:
-            proxy_url = "socks5h://127.0.0.1:1080"
-        s.close()
+
 
     for client_profile in client_profiles:
         ydl_opts = {
@@ -419,15 +453,7 @@ def download_video_and_subs(url: str, video_id: str, start_sec: int = None, end_
 
     # Support residential proxy or local SOCKS5 reverse-tunnel
     proxy_url = os.environ.get("YOUTUBE_PROXY") or os.environ.get("ALL_PROXY")
-    if not proxy_url:
-        # Check if local reverse tunnel SOCKS5 port 1080 is active
-        import socket
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(0.5)
-        if s.connect_ex(('127.0.0.1', 1080)) == 0:
-            proxy_url = "socks5h://127.0.0.1:1080"
-            print("[Downloader] Detected active reverse-tunnel proxy on port 1080.")
-        s.close()
+
 
     if proxy_url:
         ydl_opts["proxy"] = proxy_url
