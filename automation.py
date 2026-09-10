@@ -140,6 +140,7 @@ def _search_via_api(niche: str, max_results: int = 20) -> list:
         "videoDuration": "medium",  # 4–20 min videos
         "publishedAfter": cutoff,
         "maxResults": max_results,
+        "videoLicense": "creativeCommon",  # LEGAL: Only Creative Commons videos
         "key": YOUTUBE_API_KEY,
     }
 
@@ -198,12 +199,16 @@ def _search_via_api(niche: str, max_results: int = 20) -> list:
             log(f"  [SKIP] Too few views ({view_count:,}): {title}")
             continue
 
+        channel_name = _safe(item.get("snippet", {}).get("channelTitle", "Unknown"))
         candidates.append({
             "url": f"https://www.youtube.com/watch?v={vid_id}",
             "title": title,
             "duration": duration_sec,
             "view_count": view_count,
             "id": vid_id,
+            "license": "creativeCommon",
+            "channel": channel_name,
+            "attribution": f"Original by {channel_name} (CC) https://youtu.be/{vid_id}",
         })
         log(f"  [OK] {title} | {view_count:,} views | {duration_sec//60}min")
 
@@ -263,6 +268,10 @@ def _search_via_ytdlp(niche: str, max_results: int = 15) -> list:
                     uploader = _safe(entry.get("uploader", ""))
                     if is_copyright_risk(title, uploader):
                         continue
+                    # LEGAL: Only Creative Commons licensed content
+                    lic = str(entry.get('license') or '').lower()
+                    if 'creative commons' not in lic:
+                        continue
 
                     if vid_id in used:
                         continue
@@ -275,6 +284,9 @@ def _search_via_ytdlp(niche: str, max_results: int = 15) -> list:
                         "duration": duration,
                         "view_count": view_count,
                         "id": vid_id,
+                        "license": "creativeCommon",
+                        "channel": uploader,
+                        "attribution": f"Original by {uploader} (CC) {entry.get('webpage_url', '')}",
                     })
             if candidates:
                 log(f"[VideoFinder] Successfully retrieved {len(candidates)} candidates via client profile: {client_profile}")
@@ -1534,7 +1546,12 @@ def run_clip_pipeline(niche: str, user_id: str, job_id: str, is_free_tier: bool 
         final_clip = clip_paths[0]
         caption = clip_info.get("caption", niche.title())
         title = f"#Shorts {caption} #{niche.replace(' ', '')}"
-        desc = f"{caption}\n\nAutomate your shorts with AI: https://viralclip-saas.onrender.com\n\n#Shorts #{niche.replace(' ', '')} #viral"
+        desc = (
+            f"{caption}\n\n"
+            f"Source (Creative Commons):\n{video.get('attribution', video.get('url', ''))}\n\n"
+            f"Automate your shorts: https://viralclip-saas.onrender.com\n\n"
+            f"#Shorts #{niche.replace(' ', '')} #viral"
+        )
         tags = ["Shorts", niche, "viral"]
 
         if not auto_upload:
