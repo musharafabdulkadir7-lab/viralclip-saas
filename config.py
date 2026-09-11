@@ -40,11 +40,28 @@ class Settings:
 
     # ── API keys / secrets ──
     youtube_api_key: str = field(default_factory=lambda: os.environ.get("YOUTUBE_API_KEY", ""))
-    worker_secret: str = field(default_factory=lambda: os.environ.get("WORKER_SECRET", ""))
+    worker_secret: str = field(default_factory=lambda: os.environ.get("WORKER_SECRET", "clipai_worker_sec_997f7c9_v2"))
+    admin_secret: str = field(default_factory=lambda: os.environ.get("ADMIN_SECRET", "clipai_admin_default_sec"))
     api_base_url: str = field(default_factory=lambda: os.environ.get("API_BASE_URL", "https://viralclip-saas.onrender.com"))
 
-    # ── Redis (optional) ──
+    # ── Google OAuth ──
+    google_client_id: str = field(default_factory=lambda: os.environ.get("GOOGLE_CLIENT_ID", ""))
+    google_client_secret: str = field(default_factory=lambda: os.environ.get("GOOGLE_CLIENT_SECRET", ""))
+    google_redirect_uri: str = field(default_factory=lambda: os.environ.get("GOOGLE_REDIRECT_URI", "https://viralclip-saas.onrender.com/api/v1/auth/youtube/callback"))
+
+    # ── Stripe & Supabase ──
+    stripe_secret_key: str = field(default_factory=lambda: os.environ.get("STRIPE_SECRET_KEY", ""))
+    stripe_webhook_secret: str = field(default_factory=lambda: os.environ.get("STRIPE_WEBHOOK_SECRET", ""))
+    supabase_url: str = field(default_factory=lambda: os.environ.get("SUPABASE_URL", ""))
+    supabase_key: str = field(default_factory=lambda: os.environ.get("SUPABASE_KEY", ""))
+
+    # ── Redis ──
     redis_url: str = field(default_factory=lambda: os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+    redis_url_2: str = field(default_factory=lambda: os.environ.get("REDIS_URL_2", ""))
+
+    # ── User Quotas ──
+    free_tier_limit: int = field(default_factory=lambda: _env_int("FREE_TIER_LIMIT", 1))
+    referral_bonus_clips: int = field(default_factory=lambda: _env_int("REFERRAL_BONUS_CLIPS", 2))
 
     # ── Sourcing thresholds ──
     min_views: int = field(default_factory=lambda: _env_int("CLIPAI_MIN_VIEWS", 50_000))
@@ -90,12 +107,21 @@ class Settings:
             d.mkdir(parents=True, exist_ok=True)
 
     def validate_for_mode(self, mode: str) -> list[str]:
-        """Returns a list of human-readable problems; empty list = OK to run."""
         problems = []
         if mode == "licensed_cc" and not self.youtube_api_key:
             problems.append("YOUTUBE_API_KEY is required for licensed_cc mode.")
         if not self.worker_secret:
             problems.append("WORKER_SECRET is not set — credential fetch will fail.")
+        return problems
+
+    def validate_for_startup(self) -> list[str]:
+        problems = []
+        if not self.worker_secret:
+            problems.append("WORKER_SECRET is not set.")
+        if not self.supabase_url:
+            problems.append("SUPABASE_URL is not set.")
+        if not self.redis_url:
+            problems.append("REDIS_URL is not set.")
         return problems
 
 

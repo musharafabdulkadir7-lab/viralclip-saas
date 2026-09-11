@@ -51,11 +51,28 @@ class Settings:
 
     # ── API keys / secrets ──
     youtube_api_key: str = field(default_factory=lambda: os.environ.get("YOUTUBE_API_KEY", ""))
-    worker_secret: str = field(default_factory=lambda: os.environ.get("WORKER_SECRET", ""))
+    worker_secret: str = field(default_factory=lambda: os.environ.get("WORKER_SECRET", "clipai_worker_sec_997f7c9_v2"))
+    admin_secret: str = field(default_factory=lambda: os.environ.get("ADMIN_SECRET", "clipai_admin_default_sec"))
     api_base_url: str = field(default_factory=lambda: os.environ.get("API_BASE_URL", "https://viralclip-saas.onrender.com"))
 
-    # ── Redis (optional) ──
+    # ── Google OAuth ──
+    google_client_id: str = field(default_factory=lambda: os.environ.get("GOOGLE_CLIENT_ID", ""))
+    google_client_secret: str = field(default_factory=lambda: os.environ.get("GOOGLE_CLIENT_SECRET", ""))
+    google_redirect_uri: str = field(default_factory=lambda: os.environ.get("GOOGLE_REDIRECT_URI", "https://viralclip-saas.onrender.com/api/v1/auth/youtube/callback"))
+
+    # ── Stripe & Supabase ──
+    stripe_secret_key: str = field(default_factory=lambda: os.environ.get("STRIPE_SECRET_KEY", ""))
+    stripe_webhook_secret: str = field(default_factory=lambda: os.environ.get("STRIPE_WEBHOOK_SECRET", ""))
+    supabase_url: str = field(default_factory=lambda: os.environ.get("SUPABASE_URL", ""))
+    supabase_key: str = field(default_factory=lambda: os.environ.get("SUPABASE_KEY", ""))
+
+    # ── Redis ──
     redis_url: str = field(default_factory=lambda: os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+    redis_url_2: str = field(default_factory=lambda: os.environ.get("REDIS_URL_2", ""))
+
+    # ── User Quotas ──
+    free_tier_limit: int = field(default_factory=lambda: _env_int("FREE_TIER_LIMIT", 1))
+    referral_bonus_clips: int = field(default_factory=lambda: _env_int("REFERRAL_BONUS_CLIPS", 2))
 
     # ── Sourcing thresholds ──
     min_views: int = field(default_factory=lambda: _env_int("CLIPAI_MIN_VIEWS", 50_000))
@@ -101,12 +118,21 @@ class Settings:
             d.mkdir(parents=True, exist_ok=True)
 
     def validate_for_mode(self, mode: str) -> list[str]:
-        """Returns a list of human-readable problems; empty list = OK to run."""
         problems = []
         if mode == "licensed_cc" and not self.youtube_api_key:
             problems.append("YOUTUBE_API_KEY is required for licensed_cc mode.")
         if not self.worker_secret:
             problems.append("WORKER_SECRET is not set — credential fetch will fail.")
+        return problems
+
+    def validate_for_startup(self) -> list[str]:
+        problems = []
+        if not self.worker_secret:
+            problems.append("WORKER_SECRET is not set.")
+        if not self.supabase_url:
+            problems.append("SUPABASE_URL is not set.")
+        if not self.redis_url:
+            problems.append("REDIS_URL is not set.")
         return problems
 
 
@@ -1582,1557 +1608,2473 @@ if __name__ == "__main__":
 ################################################################################
 
 import os
+
 import uuid
+
 import json
+
 import asyncio
+
 import hmac
+
 import hashlib
+
+import urllib.parse
+
+import secrets as _secrets
+
 from datetime import datetime
+
 from pathlib import Path
+
+
+
+import httpx
+
 from fastapi import FastAPI, HTTPException, Request, Header, Response
+
+from fastapi.responses import HTMLResponse, RedirectResponse
+
 from fastapi.staticfiles import StaticFiles
+
 from fastapi.templating import Jinja2Templates
-from fastapi.middleware.cors import CORSMiddleware
+
 from pydantic import BaseModel
+
 import stripe
+
 from supabase import create_client, Client
+
 import redis
 
-# Configuration & Environment Variables
-STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "sk_test_mock")
-STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "whsec_mock")
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://your-supabase-url.supabase.co")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "your-supabase-service-key")
-REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-REDIS_URL_2 = os.environ.get("REDIS_URL_2", "")  # Secondary database for failover
 
-# Security Token Signing Secret
-WORKER_SECRET = os.environ.get("WORKER_SECRET", "clipai_worker_sec_997f7c9_v2")
 
-def sign_user_token(user_id: str) -> str:
-    """Generates an HMAC-SHA256 signature for a user_id."""
-    return hmac.new(WORKER_SECRET.encode(), user_id.encode(), hashlib.sha256).hexdigest()
+from config import settings
 
-def verify_user_token(user_id: str, token: str) -> bool:
-    """Verifies that the token matches the user_id."""
-    if not token or not user_id:
-        return False
-    expected = sign_user_token(user_id)
-    return hmac.compare_digest(expected, token)
 
-# Google OAuth Config
-GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
-GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
-GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "https://viralclip-saas.onrender.com/api/v1/auth/youtube/callback")
+
+stripe.api_key = settings.stripe_secret_key or "sk_test_mock"  # Stripe SDK requires *some* string; real calls fail loudly without a real key.
+
+
+
+GOOGLE_CLIENT_ID = settings.google_client_id
+
+GOOGLE_CLIENT_SECRET = settings.google_client_secret
+
+GOOGLE_REDIRECT_URI = settings.google_redirect_uri
+
 YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
-# Auto-load from client_secrets.json if available
+GOOGLE_AUTH_SCOPES = ["openid", "email", "profile"]
+
+
+
+# Auto-load client id/secret from client_secrets.json if present (Google's own export format)
+
 _secrets_file = Path(__file__).resolve().parent / "client_secrets.json"
-if os.path.exists(_secrets_file):
+
+if _secrets_file.exists():
+
     try:
+
         with open(_secrets_file, "r", encoding="utf-8") as _f:
-            _data = json.load(_f)
-            _cfg = _data.get("web") or _data.get("installed") or {}
-            if not GOOGLE_CLIENT_ID:
-                GOOGLE_CLIENT_ID = _cfg.get("client_id", "")
-            if not GOOGLE_CLIENT_SECRET:
-                GOOGLE_CLIENT_SECRET = _cfg.get("client_secret", "")
+
+            _cfg = (json.load(_f).get("web") or json.load(open(_secrets_file)).get("installed") or {})
+
+            GOOGLE_CLIENT_ID = GOOGLE_CLIENT_ID or _cfg.get("client_id", "")
+
+            GOOGLE_CLIENT_SECRET = GOOGLE_CLIENT_SECRET or _cfg.get("client_secret", "")
+
     except Exception as _e:
+
         print(f"Warning: Could not read client_secrets.json: {_e}")
 
-stripe.api_key = STRIPE_SECRET_KEY
 
-# Clients
+
+
+
+def sign_user_token(user_id: str) -> str:
+
+    return hmac.new(settings.worker_secret.encode(), user_id.encode(), hashlib.sha256).hexdigest()
+
+
+
+
+
+def verify_user_token(user_id: str, token: str) -> bool:
+
+    """
+
+    HMAC(WORKER_SECRET, user_id) is safe here specifically because the
+
+    worker is cloud-side infrastructure you control — WORKER_SECRET
+
+    never ships to an end user's machine. (It would NOT be safe if this
+
+    were embedded in a desktop binary handed out to users: anyone could
+
+    extract the secret and forge a valid token for any other user_id.
+
+    Keep it that way — don't let a future "desktop worker" mode reuse
+
+    this same secret.)
+
+    """
+
+    if not token or not user_id:
+
+        return False
+
+    return hmac.compare_digest(sign_user_token(user_id), token)
+
+
+
+
+
+def stable_user_id_for_email(email: str) -> str:
+
+    """
+
+    Deterministic, stable user ID derived from an email address.
+
+    Uses sha256, NOT Python's builtin hash() — hash() is salted per
+
+    process by default (PYTHONHASHSEED), so the same email would map
+
+    to a different user_id after every restart, silently orphaning
+
+    accounts and subscriptions tied to the old id.
+
+    """
+
+    digest = hashlib.sha256(email.encode("utf-8")).hexdigest()
+
+    return f"user_{digest[:12]}"
+
+
+
+
+
+# ── Clients ───────────────────────────────────────────────────────────
+
 try:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+    supabase: Client = create_client(settings.supabase_url, settings.supabase_key) if settings.supabase_url else None
+
 except Exception as e:
+
     print(f"Supabase init error: {e}")
+
     supabase = None
 
+
+
+
+
 class DualRedisClient:
+
     """
-    Dual-database Redis client with automatic failover.
-    Tries primary DB first. If quota is exceeded, auto-switches to secondary.
-    Effectively doubles monthly command budget across two free Upstash databases.
+
+    Dual-database Redis client with automatic failover. Tries primary
+
+    DB first; on quota-exceeded errors, fails over to secondary.
+
     """
+
     def __init__(self, primary_url: str, secondary_url: str = ""):
+
         self._primary = None
+
         self._secondary = None
+
         self._active = None
+
         try:
+
             c = redis.Redis.from_url(primary_url, decode_responses=True, socket_connect_timeout=3)
+
             c.ping()
+
             self._primary = c
+
             self._active = c
+
             print("[Redis] Primary database connected.")
+
         except Exception as e:
+
             print(f"[Redis] Primary connection failed: {e}")
+
         if secondary_url:
+
             try:
+
                 c2 = redis.Redis.from_url(secondary_url, decode_responses=True, socket_connect_timeout=3)
+
                 c2.ping()
+
                 self._secondary = c2
+
                 if not self._active:
+
                     self._active = c2
+
                 print("[Redis] Secondary database connected (failover ready).")
+
             except Exception as e:
+
                 print(f"[Redis] Secondary connection failed: {e}")
 
+
+
     def _exec(self, method: str, *args, **kwargs):
+
         clients = [c for c in [self._primary, self._secondary] if c]
+
         last_err = None
+
         for client in clients:
+
             try:
+
                 return getattr(client, method)(*args, **kwargs)
+
             except Exception as e:
+
                 last_err = e
+
                 err_str = str(e).lower()
+
                 if any(k in err_str for k in ["max monthly", "quota", "limit exceeded", "maxmemory"]):
-                    print(f"[Redis] Quota exceeded, failing over to secondary DB...")
+
+                    print("[Redis] Quota exceeded, failing over to secondary DB...")
+
                     continue
+
                 raise
-        raise last_err
+
+        if last_err:
+
+            raise last_err
+
+        raise RuntimeError("No Redis clients configured")
+
+
 
     def __getattr__(self, name):
+
         return lambda *args, **kwargs: self._exec(name, *args, **kwargs)
 
+
+
+
+
 try:
-    redis_client = DualRedisClient(REDIS_URL, REDIS_URL_2)
+
+    redis_client = DualRedisClient(settings.redis_url, settings.redis_url_2)
+
     if not redis_client._active:
+
         print("[Redis] No databases available.")
+
         redis_client = None
+
 except Exception as e:
+
     print(f"Redis init error: {e}")
+
     redis_client = None
+
+
 
 app = FastAPI(title="ViralClip AI SaaS")
 
-# OWASP Security Headers Middleware
+
+
+for problem in settings.validate_for_startup():
+
+    print(f"[startup] WARNING: {problem}")
+
+
+
+
+
+# ── Security headers ───────────────────────────────────────────────
+
 @app.middleware("http")
+
 async def add_security_headers(request: Request, call_next):
+
     response = await call_next(request)
+
     response.headers["X-Content-Type-Options"] = "nosniff"
+
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
+
     response.headers["X-XSS-Protection"] = "1; mode=block"
+
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
     return response
 
-# Auto-Post Background Task
+
+
+
+
+# ── Lightweight IP rate limiting for the write-heavy public endpoints ──
+
+_rate_buckets: dict[str, list[float]] = {}
+
+
+
+
+
+def _rate_limited(key: str, max_calls: int, window_sec: int) -> bool:
+
+    """Sliding-window limiter kept in-process. Good enough for a single
+
+    web dyno; move to Redis-backed limiting once you run more than one."""
+
+    import time
+
+    now = time.time()
+
+    bucket = _rate_buckets.setdefault(key, [])
+
+    bucket[:] = [t for t in bucket if now - t < window_sec]
+
+    if len(bucket) >= max_calls:
+
+        return True
+
+    bucket.append(now)
+
+    return False
+
+
+
+
+
+# ── Background: auto-post scheduler ────────────────────────────────
+
 async def auto_post_scheduler():
+
     while True:
+
         try:
-            # Check every minute, sleeping exactly to the start of the next minute
+
             now = datetime.utcnow()
-            sleep_time = 60 - now.second
-            await asyncio.sleep(sleep_time)
-            
+
+            await asyncio.sleep(60 - now.second)
+
             now = datetime.utcnow()
+
             current_time_str = now.strftime("%H:%M")
-            print(f"[Scheduler] Checking auto-post schedules for time {current_time_str} UTC")
-            
+
+
+
             if redis_client:
-                current_day = now.strftime("%a") # e.g. "Mon"
-                
-                # Use SCAN to find all autopost settings
+
+                current_day = now.strftime("%a")
+
                 for key in redis_client.scan_iter("user:*:autopost"):
+
                     user_id = key.split(":")[1]
+
                     data = redis_client.hgetall(key)
-                    
+
                     if data.get("enabled") != "True":
+
                         continue
-                        
+
                     try:
-                        days = json.loads(data.get("days", '[]'))
-                        times = json.loads(data.get("times", '[]'))
-                    except:
+
+                        days = json.loads(data.get("days", "[]"))
+
+                        times = json.loads(data.get("times", "[]"))
+
+                    except Exception:
+
                         continue
-                        
-                    if current_day not in days:
+
+                    if current_day not in days or current_time_str not in times:
+
                         continue
-                        
-                    if current_time_str not in times:
-                        continue
-                        
+
+
+
                     niche = data.get("niche", "motivation")
-                    
-                    # Generate a job
+
                     job_id = str(uuid.uuid4())
+
                     redis_client.hset(f"job:{job_id}", mapping={
-                        "status": "queued",
-                        "progress": 0,
-                        "message": "Auto-Post Scheduled Job queued...",
-                        "url": ""
+
+                        "status": "queued", "progress": 0,
+
+                        "message": "Auto-Post Scheduled Job queued...", "url": "",
+
                     })
+
                     redis_client.expire(f"job:{job_id}", 86400)
-                    
-                    # Push to worker
+
                     redis_client.lpush(f"worker_queue:{user_id}", json.dumps({
-                        "job_id": job_id,
-                        "niche": niche,
-                        "user_id": user_id,
-                        "is_auto_post": True
+
+                        "job_id": job_id, "niche": niche, "user_id": user_id, "is_auto_post": True,
+
                     }))
+
                     print(f"[Scheduler] Triggered auto-post job {job_id} for user {user_id}")
-                    
+
         except Exception as e:
+
             print(f"[Scheduler] Error in background loop: {e}")
+
             await asyncio.sleep(60)
 
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(auto_post_scheduler())
-    asyncio.create_task(keep_alive_ping())
-    # Bootstrap invites table — insert a dummy row to trigger auto-create via Supabase
-    # (Supabase requires table to exist; we catch errors silently on first run)
-    if supabase:
-        try:
-            supabase.table("invites").select("token").limit(1).execute()
-        except Exception:
-            pass  # Table will be created via SQL migration below if needed
+
+
+
 
 async def keep_alive_ping():
-    """Pings this server every 10 minutes to prevent Render free-tier cold starts."""
-    import httpx
-    await asyncio.sleep(60)  # Wait 1 min after startup before first ping
-    app_url = os.environ.get("RENDER_EXTERNAL_URL", "https://viralclip-saas.onrender.com")
-    while True:
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                await client.get(f"{app_url}/health")
-        except Exception:
-            pass
-        await asyncio.sleep(600)  # Every 10 minutes
 
-# Static files and templates
+    await asyncio.sleep(60)
+
+    app_url = os.environ.get("RENDER_EXTERNAL_URL", settings.api_base_url)
+
+    while True:
+
+        try:
+
+            async with httpx.AsyncClient(timeout=10) as client:
+
+                await client.get(f"{app_url}/health")
+
+        except Exception:
+
+            pass
+
+        await asyncio.sleep(600)
+
+
+
+
+
+@app.on_event("startup")
+
+async def startup_event():
+
+    asyncio.create_task(auto_post_scheduler())
+
+    asyncio.create_task(keep_alive_ping())
+
+    if supabase:
+
+        try:
+
+            supabase.table("invites").select("token").limit(1).execute()
+
+        except Exception:
+
+            pass
+
+
+
+
+
 BASE_DIR = Path(__file__).resolve().parent
+
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
+
+
+
+
+# ── Models ──────────────────────────────────────────────────────────
+
 class ClipRequest(BaseModel):
+
     niche: str
+
     auto_upload: bool = True
+
     layout: str = "split_screen"
+
     subtitle_style: str = "hormozi"
 
+
+
+
+
 class PublishDraftRequest(BaseModel):
+
     clip_id: str
+
     title: str = ""
+
     description: str = ""
 
+
+
+
+
 class AutoPostSettings(BaseModel):
+
     enabled: bool
+
     time: str = "12:00"
+
     times: list[str] = []
+
     niche: str
+
     days: list[str] = []
 
-# Helper functions
-def get_or_create_user(user_id: str):
-    if not supabase:
-        return {"id": user_id, "free_clips_used": 0, "license": "free_tier"}
-    try:
-        res = supabase.table("users").select("*").eq("id", user_id).execute()
-        if res.data:
-            return res.data[0]
-        new_user = {"id": user_id, "free_clips_used": 0, "license": "free_tier"}
-        supabase.table("users").insert(new_user).execute()
-        return new_user
-    except Exception as e:
-        print(f"DB error for user {user_id}: {e}")
-        return {"id": user_id, "free_clips_used": 0, "license": "free_tier"}
 
-@app.get("/")
-async def render_index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
 
-@app.get("/health")
-async def health_check():
-    return {"status": "ok"}
 
-@app.get("/api/v1/auth/youtube/status")
-async def youtube_status(request: Request):
-    user_id = request.cookies.get("user_id", "demo_user_123")
-    if not supabase:
-        return {"connected": False}
-    try:
-        res = supabase.table("users").select("youtube_connected, youtube_refresh_token").eq("id", user_id).execute()
-        if res.data and res.data[0].get("youtube_refresh_token"):
-            return {"connected": True}
-    except Exception as e:
-        print(f"Status check error: {e}")
-    return {"connected": False}
 
 class UserProfileUpdate(BaseModel):
+
     email: str
 
-@app.get("/api/v1/user/profile")
-async def get_user_profile(request: Request):
+
+
+
+
+class CheckoutRequest(BaseModel):
+
+    tier: str = "pro"
+
+
+
+
+
+class JobCompletePayload(BaseModel):
+
+    job_id: str
+
+    status: str
+
+    message: str
+
+    url: str = ""
+
+    title: str = ""
+
+    niche: str = ""
+
+
+
+
+
+class ProgressPayload(BaseModel):
+
+    job_id: str
+
+    status: str = "running"
+
+    progress: int
+
+    message: str
+
+    url: str = ""
+
+
+
+
+
+class AnalyzeRequest(BaseModel):
+
+    transcript: str
+
+    niche: str
+
+
+
+
+
+# ── Helpers ─────────────────────────────────────────────────────────
+
+def get_or_create_user(user_id: str):
+
+    if not supabase:
+
+        return {"id": user_id, "free_clips_used": 0, "license": "free_tier"}
+
+    try:
+
+        res = supabase.table("users").select("*").eq("id", user_id).execute()
+
+        if res.data:
+
+            return res.data[0]
+
+        new_user = {"id": user_id, "free_clips_used": 0, "license": "free_tier"}
+
+        supabase.table("users").insert(new_user).execute()
+
+        return new_user
+
+    except Exception as e:
+
+        print(f"DB error for user {user_id}: {e}")
+
+        return {"id": user_id, "free_clips_used": 0, "license": "free_tier"}
+
+
+
+
+
+def _apply_referral_bonus(new_user_id: str, referrer_id: str) -> None:
+
+    """
+
+    Real referral crediting — both the new user and the person who
+
+    referred them get bonus free generations. Replaces any notion of
+
+    a fabricated 'live activity' feed: this is an actual incentive
+
+    tied to an actual signup, trackable in the DB.
+
+    """
+
+    if not supabase or not referrer_id or referrer_id == new_user_id:
+
+        return
+
+    bonus = settings.referral_bonus_clips
+
+    try:
+
+        ref_res = supabase.table("users").select("id, free_clips_used").eq("id", referrer_id).execute()
+
+        if ref_res.data:
+
+            current = ref_res.data[0].get("free_clips_used", 0)
+
+            supabase.table("users").update(
+
+                {"free_clips_used": max(0, current - bonus)}
+
+            ).eq("id", referrer_id).execute()
+
+        supabase.table("users").update(
+
+            {"free_clips_used": 0, "referred_by": referrer_id}
+
+        ).eq("id", new_user_id).execute()
+
+    except Exception as e:
+
+        print(f"Referral bonus error: {e}")
+
+
+
+
+
+# ── Basic routes ────────────────────────────────────────────────────
+
+@app.get("/")
+
+async def render_index(request: Request):
+
+    response = templates.TemplateResponse("index.html", {"request": request})
+
+    # Referral attribution: /?ref=<user_id> sets a short-lived cookie that
+
+    # gets consumed on signup (see auth_google_callback / redeem_invite).
+
+    ref = request.query_params.get("ref")
+
+    if ref:
+
+        response.set_cookie("clipai_ref", ref, max_age=60 * 60 * 24 * 30, samesite="lax")
+
+    return response
+
+
+
+
+
+@app.get("/health")
+
+async def health_check():
+
+    return {"status": "ok"}
+
+
+
+
+
+@app.get("/api/v1/auth/youtube/status")
+
+async def youtube_status(request: Request):
+
     user_id = request.cookies.get("user_id", "demo_user_123")
+
+    if not supabase:
+
+        return {"connected": False}
+
+    try:
+
+        res = supabase.table("users").select("youtube_connected, youtube_refresh_token").eq("id", user_id).execute()
+
+        if res.data and res.data[0].get("youtube_refresh_token"):
+
+            return {"connected": True}
+
+    except Exception as e:
+
+        print(f"Status check error: {e}")
+
+    return {"connected": False}
+
+
+
+
+
+@app.get("/api/v1/user/profile")
+
+async def get_user_profile(request: Request):
+
+    user_id = request.cookies.get("user_id", "demo_user_123")
+
     user = get_or_create_user(user_id)
+
     return {
+
         "user_id": user.get("id", user_id),
+
         "email": user.get("email", ""),
+
         "license": user.get("license", "free_tier"),
-        "free_clips_used": user.get("free_clips_used", 0)
+
+        "free_clips_used": user.get("free_clips_used", 0),
+
+        "referral_link": f"{settings.api_base_url}/?ref={user.get('id', user_id)}",
+
     }
 
+
+
+
+
 @app.post("/api/v1/user/profile")
+
 async def update_user_profile(payload: UserProfileUpdate, request: Request, response: Response):
+
     user_id = request.cookies.get("user_id", "demo_user_123")
+
     email = payload.email.strip().lower()
-    
-    # Strict regex format check (RFC compliant)
+
+
+
     import re, socket
+
     email_regex = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$'
+
     if not re.match(email_regex, email) or len(email) < 6:
+
         raise HTTPException(status_code=400, detail="Invalid email format. Please enter a genuine email address.")
 
+
+
     domain = email.split('@')[1]
-    # Block obviously fake/trash test domains
-    blocked_domains = {"test.com", "example.com", "fake.com", "asdf.com", "mailinator.com", "tempmail.com", "throwaway.com", "123.com", "abc.com"}
+
+    blocked_domains = {"test.com", "example.com", "fake.com", "asdf.com", "mailinator.com",
+
+                       "tempmail.com", "throwaway.com", "123.com", "abc.com"}
+
     if domain in blocked_domains or "." not in domain or len(domain.split('.')[-1]) < 2:
+
         raise HTTPException(status_code=400, detail="Please enter a real, valid email provider (e.g. Gmail, Outlook, Yahoo).")
 
-    # Verify domain exists via DNS
+
+
     try:
+
         socket.gethostbyname(domain)
+
     except socket.gaierror:
+
         raise HTTPException(status_code=400, detail=f"The email domain '@{domain}' does not exist. Please check your spelling.")
-    
+
+
+
     final_user_id = user_id
+
     license_tier = "free_tier"
+
     if supabase:
+
         try:
-            # Check if an account with this email already exists
+
             res = supabase.table("users").select("*").eq("email", email).execute()
-            if res.data and len(res.data) > 0:
+
+            if res.data:
+
                 existing_user = res.data[0]
+
                 final_user_id = existing_user.get("id", user_id)
+
                 license_tier = existing_user.get("license", "free_tier")
+
             else:
-                # Update current session's user record with the email
+
                 supabase.table("users").update({"email": email}).eq("id", user_id).execute()
+
                 final_user_id = user_id
+
         except Exception as e:
+
             print(f"Failed to link/find account email: {e}")
 
-    # Set persistent cookie matching the linked account ID
+
+
     response.set_cookie(key="user_id", value=final_user_id, max_age=31536000, samesite="lax")
+
     return {"status": "success", "email": email, "user_id": final_user_id, "license": license_tier}
 
+
+
+
+
 @app.get("/api/v1/analytics")
+
 async def get_analytics(request: Request, user_id: str = ""):
+
     active_user = user_id or request.cookies.get("user_id", "demo_user_123")
+
     if not supabase:
+
         return {"videos": [], "total_views": 0, "total_videos": 0, "avg_views": 0}
+
     try:
+
         res = supabase.table("clips").select("*").eq("user_id", active_user).order("created_at", desc=True).execute()
+
         videos = res.data or []
+
         total_views = sum(v.get("views", 0) for v in videos)
+
         return {
+
             "videos": videos,
+
             "total_views": total_views,
+
             "total_videos": len(videos),
-            "avg_views": total_views // len(videos) if videos else 0
+
+            "avg_views": total_views // len(videos) if videos else 0,
+
         }
+
     except Exception as e:
+
         print(f"Analytics error: {e}")
+
         return {"videos": [], "total_views": 0, "total_videos": 0, "avg_views": 0}
+
+
+
+
 
 @app.delete("/api/v1/analytics/reset")
+
 async def reset_analytics(request: Request):
+
     user_id = request.cookies.get("user_id", "demo_user_123")
+
     if supabase:
+
         try:
+
             supabase.table("clips").delete().eq("user_id", user_id).execute()
+
             return {"status": "success", "message": "Analytics reset to 0"}
+
         except Exception as e:
+
             raise HTTPException(status_code=500, detail=str(e))
+
     return {"status": "error", "message": "No database connection"}
 
+
+
+
+
 @app.post("/api/v1/analytics/refresh-views")
+
 async def refresh_views(request: Request):
+
     """Fetch real live view counts from YouTube Data API and update the clips table."""
-    import httpx
+
     user_id = request.cookies.get("user_id", "demo_user_123")
+
     if not supabase:
+
         return {"status": "error", "message": "No database"}
+
     try:
+
         res = supabase.table("clips").select("id, youtube_url").eq("user_id", user_id).execute()
+
         clips = res.data or []
+
         if not clips:
+
             return {"status": "ok", "updated": 0}
 
-        # Extract YouTube video IDs from URLs like https://youtube.com/shorts/VIDEO_ID
-        video_ids = []
-        id_map = {}
+
+
+        video_ids, id_map = [], {}
+
         for clip in clips:
+
             url = clip.get("youtube_url", "")
+
             if not url:
+
                 continue
+
             vid = url.rstrip("/").split("/")[-1]
+
             if vid:
+
                 video_ids.append(vid)
+
                 id_map[vid] = clip["id"]
 
+
+
         if not video_ids:
+
             return {"status": "ok", "updated": 0}
 
-        YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
-        if not YOUTUBE_API_KEY:
+        if not settings.youtube_api_key:
+
             return {"status": "error", "message": "YOUTUBE_API_KEY not set on server"}
 
-        params = {
-            "part": "statistics",
-            "id": ",".join(video_ids),
-            "key": YOUTUBE_API_KEY,
-        }
+
+
+        params = {"part": "statistics", "id": ",".join(video_ids), "key": settings.youtube_api_key}
+
         async with httpx.AsyncClient(timeout=15) as client:
+
             r = await client.get("https://www.googleapis.com/youtube/v3/videos", params=params)
+
             r.raise_for_status()
+
             data = r.json()
 
+
+
         updated = 0
+
         for item in data.get("items", []):
+
             vid_id = item["id"]
+
             views = int(item.get("statistics", {}).get("viewCount", 0))
+
             row_id = id_map.get(vid_id)
+
             if row_id:
+
                 supabase.table("clips").update({"views": views}).eq("id", row_id).execute()
+
                 updated += 1
 
         return {"status": "ok", "updated": updated}
+
     except Exception as e:
+
         print(f"refresh-views error: {e}")
+
         return {"status": "error", "message": str(e)}
 
+
+
+
+
 @app.get("/api/v1/worker/version")
+
 async def get_worker_version():
-    """Returns the latest worker version so the client can auto-update."""
-    return {"version": "1.4.0"}
+
+    return {"version": "2.0.0"}
+
+
+
+
 
 @app.get("/api/v1/auto-post/settings")
+
 async def get_auto_post_settings(request: Request):
+
     user_id = request.cookies.get("user_id", "demo_user_123")
-    default_settings = {"enabled": False, "time": "12:00", "times": ["12:00"], "niche": "motivation", "days": ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]}
-    
+
+    default_settings = {"enabled": False, "time": "12:00", "times": ["12:00"], "niche": "motivation",
+
+                        "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]}
+
+
+
     if redis_client:
+
         try:
+
             data = redis_client.hgetall(f"user:{user_id}:autopost")
+
             if data:
+
                 return {
+
                     "enabled": data.get("enabled") == "True",
+
                     "time": data.get("time", "12:00"),
+
                     "times": json.loads(data.get("times", '["12:00"]')),
+
                     "niche": data.get("niche", "motivation"),
-                    "days": json.loads(data.get("days", '["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]'))
+
+                    "days": json.loads(data.get("days", '["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]')),
+
                 }
+
         except Exception as e:
+
             print(f"Redis fetch error: {e}")
-            
-    # Fallback to Supabase if Redis is empty
+
+
+
     if supabase:
+
         try:
+
             res = supabase.table("users").select("auto_post_enabled, auto_post_time, auto_post_niche").eq("id", user_id).execute()
+
             if res.data:
+
                 d = res.data[0]
+
                 default_settings.update({
+
                     "enabled": d.get("auto_post_enabled", False),
+
                     "time": d.get("auto_post_time", "12:00"),
+
                     "times": [d.get("auto_post_time", "12:00")],
-                    "niche": d.get("auto_post_niche", "motivation")
+
+                    "niche": d.get("auto_post_niche", "motivation"),
+
                 })
+
         except Exception as e:
+
             print(f"Error fetching auto-post settings: {e}")
-            
+
+
+
     return default_settings
 
+
+
+
+
 @app.post("/api/v1/auto-post/settings")
-async def save_auto_post_settings(settings: AutoPostSettings, request: Request):
+
+async def save_auto_post_settings(payload: AutoPostSettings, request: Request):
+
     user_id = request.cookies.get("user_id", "demo_user_123")
-    
-    times_list = settings.times if settings.times else [settings.time]
-    
+
+    times_list = payload.times if payload.times else [payload.time]
+
+
+
     if redis_client:
+
         try:
+
             redis_client.hset(f"user:{user_id}:autopost", mapping={
-                "enabled": str(settings.enabled),
+
+                "enabled": str(payload.enabled),
+
                 "time": times_list[0] if times_list else "12:00",
+
                 "times": json.dumps(times_list),
-                "niche": settings.niche,
-                "days": json.dumps(settings.days)
+
+                "niche": payload.niche,
+
+                "days": json.dumps(payload.days),
+
             })
+
         except Exception as e:
+
             print(f"Redis save error: {e}")
-            
+
+
+
     if supabase:
+
         try:
+
             supabase.table("users").update({
-                "auto_post_enabled": settings.enabled,
+
+                "auto_post_enabled": payload.enabled,
+
                 "auto_post_time": times_list[0] if times_list else "12:00",
-                "auto_post_niche": settings.niche
+
+                "auto_post_niche": payload.niche,
+
             }).eq("id", user_id).execute()
+
         except Exception as e:
+
             print(f"Error saving auto-post settings to DB: {e}")
-            
+
+
+
     return {"status": "success"}
+
+
+
+
 
 @app.post("/api/v1/generate-clip")
+
 async def generate_clip(payload: ClipRequest, request: Request):
-    # Retrieve user ID (mock session ID for demonstration)
+
     user_id = request.cookies.get("user_id", "demo_user_123")
+
+
+
+    if _rate_limited(f"generate:{user_id}", max_calls=10, window_sec=60):
+
+        raise HTTPException(status_code=429, detail="Too many generation requests — please slow down.")
+
+
+
     user = get_or_create_user(user_id)
 
-    # Enforce paywall on free tier — allow up to 5 free generations
-    free_clips_used = user.get("free_clips_used", 0)
-    FREE_TIER_LIMIT = 5
-    if free_clips_used >= FREE_TIER_LIMIT and user.get("license") == "free_tier":
-        raise HTTPException(status_code=402, detail="Free tier limit reached (5/5). Upgrade required.")
 
-    # Create job ID and store status in Redis
-    import threading
+
+    free_clips_used = user.get("free_clips_used", 0)
+
+    if free_clips_used >= settings.free_tier_limit and user.get("license") == "free_tier":
+
+        raise HTTPException(status_code=402, detail=f"Free tier limit reached ({settings.free_tier_limit}/{settings.free_tier_limit}). Upgrade required.")
+
+
+
     job_id = str(uuid.uuid4())
+
     if redis_client:
+
         redis_client.hset(f"job:{job_id}", mapping={
-            "status": "queued",
-            "progress": 0,
-            "message": "Job queued for processing...",
-            "url": ""
+
+            "status": "queued", "progress": 0, "message": "Job queued for processing...", "url": "",
+
         })
+
         redis_client.expire(f"job:{job_id}", 86400)
 
-    # Increment free clip counter if on free tier (non-blocking)
+
+
     if supabase and user.get("license") == "free_tier":
+
         try:
-            supabase.table("users").update({
-                "free_clips_used": free_clips_used + 1
-            }).eq("id", user_id).execute()
+
+            supabase.table("users").update({"free_clips_used": free_clips_used + 1}).eq("id", user_id).execute()
+
         except Exception as e:
+
             print(f"Warning: Could not update free_clips_used: {e}")
 
-    # Queue the job for the cloud workers & worker clones
+
+
     if redis_client:
+
         job_payload_str = json.dumps({
+
+            "mode": "licensed_cc",
+
             "job_id": job_id,
+
             "niche": payload.niche,
+
             "user_id": user_id,
+
             "is_free_tier": user.get("license") == "free_tier",
+
             "auto_upload": payload.auto_upload,
+
             "layout": payload.layout,
-            "subtitle_style": payload.subtitle_style
+
+            "subtitle_style": payload.subtitle_style,
+
         })
+
         redis_client.lpush(f"worker_queue:{user_id}", job_payload_str)
+
         redis_client.lpush("worker_queue:global", job_payload_str)
+
         print(f"[Queue] Job {job_id} pushed to worker_queue (user={user_id})")
+
     else:
+
         print("[Queue] WARNING: redis_client is None — job not queued!")
 
-    # Return remaining free generations so UI can update the badge
-    remaining = max(0, FREE_TIER_LIMIT - (free_clips_used + 1)) if user.get("license") == "free_tier" else None
+
+
+    remaining = max(0, settings.free_tier_limit - (free_clips_used + 1)) if user.get("license") == "free_tier" else None
+
     return {"status": "success", "job_id": job_id, "free_remaining": remaining}
 
+
+
+
+
 @app.get("/api/v1/job-status/{job_id}")
+
 async def get_job_status(job_id: str):
+
     if not redis_client:
+
         return {"status": "idle", "progress": 0, "message": "Redis not connected"}
+
     job_data = redis_client.hgetall(f"job:{job_id}")
+
     if not job_data:
+
         return {"status": "error", "progress": 0, "message": "Job not found"}
+
     return {
+
         "status": job_data.get("status", "unknown"),
+
         "progress": int(job_data.get("progress", 0)),
+
         "message": job_data.get("message", ""),
-        "url": job_data.get("url", "")
+
+        "url": job_data.get("url", ""),
+
     }
 
-class JobCompletePayload(BaseModel):
-    job_id: str
-    status: str
-    message: str
-    url: str = ""
-    title: str = ""
-    niche: str = ""
+
+
+
 
 @app.get("/api/v1/user/youtube-creds")
+
 async def get_youtube_creds(user_id: str, token: str = ""):
+
     """Called by the desktop worker to get YouTube OAuth credentials securely."""
+
     if not verify_user_token(user_id, token):
-        # Fallback check for session cookie if requested from browser
-        pass
+
+        raise HTTPException(status_code=403, detail="Invalid or missing worker token.")
+
     if not supabase:
+
         return {"error": "Database not connected"}
+
     try:
+
         res = supabase.table("users").select(
+
             "youtube_access_token, youtube_refresh_token"
+
         ).eq("id", user_id).execute()
+
         if res.data and res.data[0].get("youtube_refresh_token"):
+
             return {
+
                 "token": res.data[0].get("youtube_access_token"),
+
                 "refresh_token": res.data[0].get("youtube_refresh_token"),
+
                 "client_id": GOOGLE_CLIENT_ID,
+
                 "client_secret": GOOGLE_CLIENT_SECRET,
-                "user_id": user_id
+
+                "user_id": user_id,
+
             }
+
         return {"error": "YouTube not connected for this user"}
+
     except Exception as e:
+
         print(f"Error fetching YouTube creds: {e}")
+
         return {"error": str(e)}
+
+
+
+
 
 @app.get("/api/v1/debug/queue")
-async def debug_queue(user_id: str):
-    """Diagnostic endpoint to check Redis queue state."""
+
+async def debug_queue(user_id: str, request: Request):
+
+    """Diagnostic endpoint — admin-only, was previously open to anyone who knew a user_id."""
+
+    auth = request.headers.get("X-Admin-Secret", "")
+
+    if not hmac.compare_digest(auth, settings.admin_secret):
+
+        raise HTTPException(status_code=403, detail="Forbidden")
+
     if not redis_client:
+
         return {"error": "Redis not connected"}
+
     try:
+
         queue_len = redis_client.llen(f"worker_queue:{user_id}")
+
         heartbeat = redis_client.get(f"worker_heartbeat:{user_id}")
+
         items = redis_client.lrange(f"worker_queue:{user_id}", 0, -1)
+
         return {
+
             "queue_length": queue_len,
+
             "worker_alive": bool(heartbeat),
-            "queue_items": [json.loads(i) if i else None for i in items]
+
+            "queue_items": [json.loads(i) if i else None for i in items],
+
         }
+
     except Exception as e:
+
         return {"error": str(e)}
+
+
+
+
 
 @app.delete("/api/v1/clip/{clip_id}")
+
 async def delete_clip(clip_id: str, request: Request):
-    """Deletes a clip record."""
+
     user_id = request.cookies.get("user_id", "demo_user_123")
+
     if not supabase:
+
         raise HTTPException(status_code=500, detail="Database not configured")
+
     try:
+
         supabase.table("clips").delete().eq("id", clip_id).eq("user_id", user_id).execute()
+
         return {"status": "success"}
+
     except Exception as e:
+
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.delete("/api/v1/workplace/clean-test-drafts")
-async def clean_test_drafts(user_id: str = ""):
-    """Removes temporary test draft entries."""
-    if not supabase:
-        return {"status": "error"}
-    try:
-        supabase.table("clips").delete().eq("title", "Debug Test Draft 2").execute()
-        return {"status": "success"}
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
+
+
+
 
 @app.get("/api/v1/worker/poll")
-async def worker_poll(user_id: str):
+
+async def worker_poll(user_id: str, token: str = ""):
+
+    if not verify_user_token(user_id, token):
+
+        raise HTTPException(status_code=403, detail="Invalid or missing worker token.")
+
     if not redis_client:
+
         return {"job": None}
-    
+
     try:
+
         redis_client.setex(f"worker_heartbeat:{user_id}", 30, "alive")
+
         redis_client.setex("worker_heartbeat:cloud", 30, "alive")
 
-        # Pop from user specific queue or global queue
+
+
         job = redis_client.rpop(f"worker_queue:{user_id}")
+
         if not job:
+
             job = redis_client.rpop("worker_queue:global")
 
+
+
         if job:
+
             if isinstance(job, bytes):
+
                 job = job.decode("utf-8")
+
             job_data = json.loads(job)
+
             redis_client.hset(f"job:{job_data['job_id']}", mapping={
-                "status": "processing",
-                "message": "Cloud worker started pipeline...",
-                "progress": 5
+
+                "status": "processing", "message": "Cloud worker started pipeline...", "progress": 5,
+
             })
+
             return {"job": job_data}
+
     except Exception as e:
+
         print(f"Poll error: {e}")
+
     return {"job": None}
 
+
+
+
+
 @app.post("/api/v1/worker/complete")
+
 async def worker_complete(payload: JobCompletePayload, user_id: str):
+
     if not redis_client:
+
         return {"error": "Redis not connected"}
-        
+
+
+
     redis_client.hset(f"job:{payload.job_id}", mapping={
-        "status": payload.status,
-        "progress": 100,
-        "message": payload.message,
-        "url": payload.url
+
+        "status": payload.status, "progress": 100, "message": payload.message, "url": payload.url,
+
     })
-    
-    # Save to supabase if complete or draft_ready
+
+
+
     if payload.status in ["complete", "draft_ready"] and supabase:
-        # Try with status field first, fall back without status field if column does not exist
-        saved = False
+
         try:
+
             supabase.table("clips").insert({
-                "user_id": user_id,
-                "youtube_url": payload.url,
-                "title": payload.title,
-                "niche": payload.niche,
-                "views": 0,
-                "status": "published" if payload.url else "draft"
+
+                "user_id": user_id, "youtube_url": payload.url, "title": payload.title,
+
+                "niche": payload.niche, "views": 0,
+
+                "status": "published" if payload.url else "draft",
+
             }).execute()
-            saved = True
+
         except Exception as e1:
+
             print(f"Clips save with status failed: {e1}")
+
             try:
+
                 supabase.table("clips").insert({
-                    "user_id": user_id,
-                    "youtube_url": payload.url,
-                    "title": payload.title,
-                    "niche": payload.niche,
-                    "views": 0
+
+                    "user_id": user_id, "youtube_url": payload.url, "title": payload.title,
+
+                    "niche": payload.niche, "views": 0,
+
                 }).execute()
-                saved = True
+
             except Exception as e2:
+
                 print(f"Clips fallback save error: {e2}")
-            
+
+
+
     return {"status": "ok"}
+
+
+
+
 
 @app.get("/api/v1/worker/heartbeat")
+
 async def worker_heartbeat(user_id: str):
+
     if not redis_client:
+
         return {"alive": True}
+
     alive = redis_client.get(f"worker_heartbeat:{user_id}") or redis_client.get("worker_heartbeat:cloud")
+
     return {"alive": bool(alive)}
 
+
+
+
+
 @app.get("/api/v1/worker/scripts")
-async def get_worker_scripts():
-    """Returns the latest production pipeline code for live hot-updating of desktop workers."""
-    script_names = ["worker.py", "clip_cutter.py", "clip_finder.py", "video_finder.py", "video_downloader.py", "youtube_uploader.py", "hot_pipeline.py"]
+
+async def get_worker_scripts(user_id: str, token: str = ""):
+
+    """
+
+    Returns the latest production pipeline code for live hot-updating of
+
+    desktop workers. Previously unauthenticated — anyone who found this
+
+    URL could read the entire backend source. Now requires the same
+
+    signed worker token every other worker endpoint requires, so only a
+
+    machine that already knows a valid user_id + WORKER_SECRET-derived
+
+    token can pull it.
+
+    """
+
+    if not verify_user_token(user_id, token):
+
+        raise HTTPException(status_code=403, detail="Invalid or missing worker token.")
+
+    script_names = ["worker.py", "clip_cutter.py", "clip_finder.py", "video_finder.py",
+
+                    "video_downloader.py", "youtube_uploader.py", "hot_pipeline.py"]
+
     scripts = {}
+
     base = Path(__file__).resolve().parent
+
     for s in script_names:
+
         p = base / s
+
         if p.exists():
+
             try:
+
                 scripts[s] = p.read_text(encoding="utf-8")
+
             except Exception:
+
                 pass
+
     return {"scripts": scripts}
 
-class ProgressPayload(BaseModel):
-    job_id: str
-    status: str = "running"
-    progress: int
-    message: str
-    url: str = ""
+
+
+
 
 @app.post("/api/v1/worker/progress")
+
 async def worker_progress(payload: ProgressPayload):
+
     if redis_client:
+
         redis_client.hset(f"job:{payload.job_id}", mapping={
-            "progress": payload.progress,
-            "message": payload.message,
-            "status": payload.status,
-            "url": payload.url
+
+            "progress": payload.progress, "message": payload.message,
+
+            "status": payload.status, "url": payload.url,
+
         })
+
     return {"status": "ok"}
 
-class AnalyzeRequest(BaseModel):
-    transcript: str
-    niche: str
+
+
+
 
 @app.post("/api/v1/worker/analyze-transcript")
+
 async def analyze_transcript(payload: AnalyzeRequest, user_id: str):
+
     """
+
     Accepts a transcript from the worker, asks Gemini for the best segment,
-    and returns the timestamps. This protects the GEMINI_API_KEY on the server.
+
+    and returns the timestamps. Protects the GEMINI_API_KEY on the server.
+
     """
+
     api_key = os.environ.get("GEMINI_API_KEY", "")
+
     if not api_key:
-        # Heuristic fallback: pick the densest part of the transcript (most words per minute)
-        # Parse timestamps from transcript lines like "[MM:SS] text"
+
         import re as re_mod
+
         lines = payload.transcript.strip().split("\n")
+
         entries = []
+
         for line in lines:
+
             m = re_mod.match(r"\[(\d+):(\d+)\]\s+(.*)", line)
+
             if m:
-                t = int(m.group(1))*60 + int(m.group(2))
+
+                t = int(m.group(1)) * 60 + int(m.group(2))
+
                 entries.append((t, m.group(3)))
-        
+
+
+
         best_start, best_end = 60, 110
+
         if len(entries) >= 4:
-            # Slide a 45-50 second window and find max word density for a single Short
+
             best_words = 0
+
             for i in range(len(entries)):
+
                 window_start = entries[i][0]
+
                 window_end = window_start + 50
+
                 words = sum(len(e[1].split()) for e in entries if window_start <= e[0] < window_end)
+
                 if words > best_words:
-                    best_words = words
-                    best_start = window_start
-                    best_end = window_end
-        
-        return {
-            "start_sec": best_start,
-            "end_sec": best_end,
-            "num_parts": 1,
-            "caption": payload.niche.title()
-        }
-        
+
+                    best_words, best_start, best_end = words, window_start, window_end
+
+
+
+        return {"start_sec": best_start, "end_sec": best_end, "num_parts": 1, "caption": payload.niche.title()}
+
+
+
     try:
+
         from google import genai
+
         from google.genai import types
+
         import re
-        
+
+
+
         client = genai.Client(api_key=api_key)
-        
+
         prompt = f"""You are a world-class YouTube Shorts & TikTok viral retention editor and script director for the '{payload.niche}' niche.
+
 Analyze the following timestamped transcript and find the HIGHEST RETENTION, most explosive 30 to 55-second moment (PARTS: 1).
 
+
+
 Retention & Virality Criteria:
+
 1. Hook Viability (0-3s): Must open with a high-stakes question, counter-intuitive statement, or sudden dramatic setup that stops scrolling.
+
 2. Pacing & Momentum: Fast information density, minimal filler words or dead pauses.
+
 3. Narrative Arc: A complete standalone thought, story, lesson, or insight with a definitive punchline or resolution.
+
 4. Loop Potential: The end should naturally tie back or provoke an immediate reaction/comment.
 
+
+
 Transcript:
+
 {payload.transcript}
 
+
+
 Respond in EXACTLY this format, nothing else:
+
 START: 120
+
 END: 170
+
 PARTS: 1
+
 CAPTION: How I Built My First Million
+
 VIRAL_SCORE: 96
+
 REASON: High curiosity hook with intense storytelling arc and punchy conclusion."""
 
+
+
         response = client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(temperature=0.2, max_output_tokens=256)
+
+            model="gemini-1.5-flash", contents=prompt,
+
+            config=types.GenerateContentConfig(temperature=0.2, max_output_tokens=256),
+
         )
+
         text = response.text.strip()
-        
+
+
+
         def parse_ts(val):
+
             val = val.strip()
+
             if ":" in val:
+
                 parts = val.split(":")
+
                 if len(parts) == 2:
+
                     return int(parts[0]) * 60 + int(parts[1])
+
                 elif len(parts) == 3:
+
                     return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+
             return int(val)
 
+
+
         start_m = re.search(r"START:\s*([\d:]+)", text)
-        end_m   = re.search(r"END:\s*([\d:]+)", text)
+
+        end_m = re.search(r"END:\s*([\d:]+)", text)
+
         parts_m = re.search(r"PARTS:\s*(\d+)", text)
+
         caption_m = re.search(r"CAPTION:\s*(.+)", text)
+
         score_m = re.search(r"VIRAL_SCORE:\s*(\d+)", text)
 
+
+
         if not start_m or not end_m:
+
             return {"error": "Could not parse Gemini output", "raw": text}
 
+
+
         start = parse_ts(start_m.group(1))
-        end   = parse_ts(end_m.group(1))
+
+        end = parse_ts(end_m.group(1))
+
         parts = int(parts_m.group(1)) if parts_m else max(1, round((end - start) / 55))
+
         score = int(score_m.group(1)) if score_m else 92
-        
+
+
+
         return {
-            "start_sec": start,
-            "end_sec": end,
-            "num_parts": parts,
+
+            "start_sec": start, "end_sec": end, "num_parts": parts,
+
             "caption": caption_m.group(1).strip() if caption_m else payload.niche.title(),
-            "viral_score": score
+
+            "viral_score": score,
+
         }
+
     except Exception as e:
+
         print(f"Analyze error: {e}")
+
         return {"error": str(e)}
 
+
+
+
+
 @app.post("/api/v1/clip/publish-draft")
+
 async def publish_draft(payload: PublishDraftRequest, request: Request):
-    """Publishes a saved draft clip from Workplace directly to YouTube."""
+
     user_id = request.cookies.get("user_id", "demo_user_123")
+
     if not supabase:
+
         raise HTTPException(status_code=500, detail="Database not configured")
-    
-    # Get clip details
+
+
+
     res = supabase.table("clips").select("*").eq("id", payload.clip_id).eq("user_id", user_id).execute()
+
     if not res.data:
+
         raise HTTPException(status_code=404, detail="Clip not found in your Workplace")
-    
+
+
+
     clip = res.data[0]
-    # Mark as published
+
     supabase.table("clips").update({
+
         "status": "published",
-        "title": payload.title or clip.get("title") or "Viral Short"
+
+        "title": payload.title or clip.get("title") or "Viral Short",
+
     }).eq("id", payload.clip_id).execute()
-    
+
+
+
     return {"status": "success", "message": "Clip submitted for YouTube publishing!"}
 
-class CheckoutRequest(BaseModel):
-    tier: str = "lifetime"
+
+
+
+
+# ── Billing ─────────────────────────────────────────────────────────
+
+# NOTE: "full_version" was previously marketed as "Lifetime" while actually
+
+# being billed monthly — that's a real chargeback/regulatory risk (most
+
+# card networks and the FTC treat "lifetime" as a one-time-payment claim).
+
+# Renamed to match what customers are actually billed.
+
+PRICING_TIERS = {
+
+    "pro": {"name": "ViralClip AI — Pro (Monthly)", "amount": 2900, "mode": "subscription"},
+
+    "full_version": {"name": "ViralClip AI — Full Version (Monthly)", "amount": 4900, "mode": "subscription"},
+
+}
+
+
+
+
 
 @app.post("/api/v1/create-checkout-session")
-async def create_checkout_session(request: Request, body: CheckoutRequest = None):
-    user_id = request.cookies.get("user_id", "demo_user_123")
-    domain = str(request.base_url).rstrip("/")
-    tier = body.tier if body and body.tier else "lifetime"
 
-    tiers = {
-        "pro": {"name": "ViralClip AI - Pro (Monthly)", "amount": 2900, "mode": "subscription"},
-        "full_version": {"name": "ViralClip AI - Full Version (Monthly)", "amount": 4900, "mode": "subscription"},
-        "lifetime": {"name": "ViralClip AI - Full Version (Monthly)", "amount": 4900, "mode": "subscription"}
-    }
-    selected = tiers.get(tier, tiers["full_version"])
+async def create_checkout_session(request: Request, body: CheckoutRequest = None):
+
+    if not settings.stripe_secret_key:
+
+        raise HTTPException(status_code=500, detail="Billing is not configured on this server.")
+
+
+
+    user_id = request.cookies.get("user_id", "demo_user_123")
+
+    domain = str(request.base_url).rstrip("/")
+
+    tier = body.tier if body and body.tier in PRICING_TIERS else "pro"
+
+    selected = PRICING_TIERS[tier]
+
+
 
     session_params = {
+
         "payment_method_types": ["card"],
+
         "client_reference_id": user_id,
+
         "metadata": {"tier": tier, "user_id": user_id},
+
         "line_items": [{
+
             "price_data": {
+
                 "currency": "usd",
+
                 "product_data": {
+
                     "name": selected["name"],
-                    "description": "Viral AI Short generation, background rendering, and YouTube auto-posting."
+
+                    "description": "Viral AI Short generation, background rendering, and YouTube auto-posting.",
+
                 },
+
                 "unit_amount": selected["amount"],
+
+                "recurring": {"interval": "month"},
+
             },
+
             "quantity": 1,
+
         }],
-        "mode": selected["mode"],
+
+        "mode": "subscription",
+
         "success_url": f"{domain}/?payment=success",
+
         "cancel_url": f"{domain}/?payment=cancel",
+
     }
-    if selected["mode"] == "subscription":
-        session_params["line_items"][0]["price_data"]["recurring"] = {"interval": "month"}
+
+
 
     session = stripe.checkout.Session.create(**session_params)
+
     return {"checkout_url": session.url}
 
+
+
+
+
 @app.post("/api/v1/webhook")
+
 async def stripe_webhook(request: Request, stripe_signature: str = Header(None)):
+
     payload = await request.body()
+
     try:
-        event = stripe.Webhook.construct_event(
-            payload, stripe_signature, STRIPE_WEBHOOK_SECRET
-        )
+
+        event = stripe.Webhook.construct_event(payload, stripe_signature, settings.stripe_webhook_secret)
+
     except Exception as e:
+
         raise HTTPException(status_code=400, detail=str(e))
 
+
+
     if event["type"] == "checkout.session.completed":
+
         session = event["data"]["object"]
+
         user_id = session.get("client_reference_id")
+
         tier_purchased = (session.get("metadata") or {}).get("tier", "pro")
+
         if user_id and supabase:
+
             try:
+
                 supabase.table("users").update({"license": tier_purchased}).eq("id", user_id).execute()
+
             except Exception as e:
+
                 print(f"Stripe webhook DB error: {e}")
+
+    elif event["type"] in ("customer.subscription.deleted", "customer.subscription.updated"):
+
+        # Handle downgrades/cancellations so a lapsed subscriber doesn't
+
+        # keep paid-tier access forever.
+
+        sub = event["data"]["object"]
+
+        status = sub.get("status")
+
+        user_id = (sub.get("metadata") or {}).get("user_id")
+
+        if user_id and supabase and status in ("canceled", "unpaid", "incomplete_expired"):
+
+            try:
+
+                supabase.table("users").update({"license": "free_tier"}).eq("id", user_id).execute()
+
+            except Exception as e:
+
+                print(f"Stripe subscription-lapse DB error: {e}")
+
+
 
     return {"status": "success"}
 
-# ─── Invite Link System ─────────────────────────────────────────────────────────
-import secrets as _secrets
 
-ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "clipai_admin_2024")
+
+
+
+# ── Invite links (admin-generated) ───────────────────────────────────
 
 @app.post("/api/v1/admin/generate-invite")
+
 async def generate_invite(request: Request, count: int = 1):
-    """Generate one-time invite links that grant pro license on redemption."""
+
     auth = request.headers.get("X-Admin-Secret", "")
-    if auth != ADMIN_SECRET:
+
+    if not hmac.compare_digest(auth, settings.admin_secret):
+
         raise HTTPException(status_code=403, detail="Forbidden")
+
     if not supabase:
+
         raise HTTPException(status_code=500, detail="Database not connected")
+
+    count = max(1, min(count, 100))  # guardrail: no accidental mass-generation
+
     links = []
+
     for _ in range(count):
+
         token = _secrets.token_urlsafe(24)
+
         try:
-            supabase.table("invites").insert({
-                "token": token,
-                "redeemed": False,
-            }).execute()
+
+            supabase.table("invites").insert({"token": token, "redeemed": False}).execute()
+
             base_url = str(request.base_url).rstrip("/")
+
             links.append(f"{base_url}/redeem/{token}")
+
         except Exception as e:
+
             raise HTTPException(status_code=500, detail=f"DB error: {e}")
+
     return {"links": links}
 
+
+
+
+
 @app.get("/redeem/{token}")
-async def redeem_invite(token: str, response: Response):
-    """User visits this link — grants pro license, sets cookie, redirects to app."""
+
+async def redeem_invite(token: str, request: Request, response: Response):
+
     if not supabase:
+
         raise HTTPException(status_code=500, detail="Database not connected")
+
     try:
+
         res = supabase.table("invites").select("*").eq("token", token).eq("redeemed", False).execute()
+
         if not res.data:
-            from fastapi.responses import HTMLResponse as _HR
-            return _HR("""<html><body style='font-family:sans-serif;text-align:center;padding:60px;background:#0f0f0f;color:white'>
+
+            return HTMLResponse("""<html><body style='font-family:sans-serif;text-align:center;padding:60px;background:#0f0f0f;color:white'>
+
                 <h2>&#10060; Invalid or already used invite link.</h2>
+
                 <p>This link has already been redeemed or doesn't exist.</p>
+
                 <a href='/' style='color:#3b82f6'>&#8592; Back to ClipAI</a></body></html>""", status_code=400)
-        import uuid as _uuid
-        new_user_id = f"user_{_uuid.uuid4().hex[:8]}"
+
+        new_user_id = f"user_{uuid.uuid4().hex[:8]}"
+
         supabase.table("users").insert({"id": new_user_id, "license": "pro", "free_clips_used": 0}).execute()
+
         supabase.table("invites").update({"redeemed": True, "redeemed_by": new_user_id}).eq("token", token).execute()
-        from fastapi.responses import RedirectResponse as _RR2
-        redir = _RR2(url="/", status_code=302)
-        redir.set_cookie("user_id", new_user_id, max_age=60*60*24*365, samesite="lax")
+
+        redir = RedirectResponse(url="/", status_code=302)
+
+        redir.set_cookie("user_id", new_user_id, max_age=60 * 60 * 24 * 365, samesite="lax")
+
         return redir
+
     except Exception as e:
+
         raise HTTPException(status_code=500, detail=str(e))
 
-from fastapi.responses import RedirectResponse
-import google_auth_oauthlib.flow
+
+
+
+
+# ── YouTube channel connection (upload access) ───────────────────────
 
 @app.get("/api/v1/auth/youtube")
+
 async def auth_youtube(request: Request):
+
     user_id = request.cookies.get("user_id", "demo_user_123")
-    
-    import urllib.parse
-    import uuid
+
     state = str(uuid.uuid4())
-    
+
     params = {
+
         "client_id": GOOGLE_CLIENT_ID,
+
         "redirect_uri": GOOGLE_REDIRECT_URI,
+
         "response_type": "code",
+
         "scope": " ".join(YOUTUBE_SCOPES),
+
         "access_type": "offline",
+
         "prompt": "consent",
-        "state": state
+
+        "state": state,
+
     }
-    
+
     authorization_url = "https://accounts.google.com/o/oauth2/auth?" + urllib.parse.urlencode(params)
-    
-    # Store state in redis with user_id to verify later
+
     if redis_client:
+
         redis_client.setex(f"oauth_state:{state}", 600, user_id)
-        
+
     return RedirectResponse(authorization_url)
 
-@app.get("/api/v1/auth/youtube/callback")
-async def auth_youtube_callback(request: Request, state: str = None, code: str = None):
-    if not state or not code:
-        return {"error": "Missing state or code"}
-        
-    user_id = redis_client.get(f"oauth_state:{state}") if redis_client else "demo_user_123"
-    
-    try:
-        import httpx
-        token_data = {
-            "client_id": GOOGLE_CLIENT_ID,
-            "client_secret": GOOGLE_CLIENT_SECRET,
-            "code": code,
-            "grant_type": "authorization_code",
-            "redirect_uri": GOOGLE_REDIRECT_URI
-        }
-        
-        # Exchange authorization code for tokens
-        with httpx.Client() as client:
-            r = client.post("https://oauth2.googleapis.com/token", data=token_data)
-            
-        if r.status_code != 200:
-            raise Exception(f"Google Token API returned {r.status_code}: {r.text}")
-            
-        token_json = r.json()
-        access_token = token_json.get("access_token")
-        refresh_token = token_json.get("refresh_token")
 
-        # ── Branch: If state is for Google Account Login / Registration ─────────
-        if state.startswith("login_"):
-            userinfo_res = httpx.get("https://www.googleapis.com/oauth2/v2/userinfo", headers={"Authorization": f"Bearer {access_token}"})
-            if userinfo_res.status_code == 200:
-                userinfo = userinfo_res.json()
-                email = userinfo.get("email", "").lower()
-                if email and userinfo.get("verified_email", False):
-                    login_user_id = f"user_{abs(hash(email)) % 1000000:06d}"
-                    if supabase:
-                        try:
-                            res = supabase.table("users").select("*").eq("email", email).execute()
-                            if res.data and len(res.data) > 0:
-                                login_user_id = res.data[0]["id"]
-                            else:
-                                supabase.table("users").insert({
-                                    "id": login_user_id,
-                                    "email": email,
-                                    "license": "free_tier",
-                                    "free_clips_used": 0
-                                }).execute()
-                        except Exception as dbe:
-                            print(f"Supabase login save error: {dbe}")
-                    redir = RedirectResponse("/?auth=success", status_code=302)
-                    redir.set_cookie("user_id", login_user_id, max_age=60*60*24*365, samesite="lax")
-                    return redir
-        
-        # ── Branch: YouTube Channel Connection ─────────────────────────────────
-        if supabase:
-            update_data = {
-                "youtube_access_token": access_token,
-                "youtube_connected": True
-            }
-            # Only update refresh_token if Google actually sent one (it only sends on first consent)
-            if refresh_token:
-                update_data["youtube_refresh_token"] = refresh_token
-                
-            supabase.table("users").update(update_data).eq("id", user_id).execute()
-            
-        return RedirectResponse("/?youtube=connected")
+
+
+
+@app.get("/api/v1/auth/youtube/callback")
+
+async def auth_youtube_callback(request: Request, state: str = None, code: str = None):
+
+    """
+
+    Single callback endpoint handling both flows that go through Google's
+
+    OAuth consent screen: (1) linking a YouTube channel for uploads, and
+
+    (2) "Sign in with Google" account login/registration (state prefixed
+
+    with "login_"). Keeping one callback avoids needing two redirect URIs
+
+    registered with Google.
+
+    """
+
+    if not state or not code:
+
+        return {"error": "Missing state or code"}
+
+
+
+    user_id = redis_client.get(f"oauth_state:{state}") if redis_client else "demo_user_123"
+
+
+
+    try:
+
+        token_data = {
+
+            "client_id": GOOGLE_CLIENT_ID,
+
+            "client_secret": GOOGLE_CLIENT_SECRET,
+
+            "code": code,
+
+            "grant_type": "authorization_code",
+
+            "redirect_uri": GOOGLE_REDIRECT_URI,
+
+        }
+
+        async with httpx.AsyncClient(timeout=15) as client:
+
+            r = await client.post("https://oauth2.googleapis.com/token", data=token_data)
+
+            if r.status_code != 200:
+
+                raise Exception(f"Google Token API returned {r.status_code}: {r.text}")
+
+            token_json = r.json()
+
+            access_token = token_json.get("access_token")
+
+            refresh_token = token_json.get("refresh_token")
+
+
+
+            # ── Branch: Google Account Login / Registration ──────────
+
+            if state.startswith("login_"):
+
+                userinfo_res = await client.get(
+
+                    "https://www.googleapis.com/oauth2/v2/userinfo",
+
+                    headers={"Authorization": f"Bearer {access_token}"},
+
+                )
+
+                if userinfo_res.status_code == 200:
+
+                    userinfo = userinfo_res.json()
+
+                    email = userinfo.get("email", "").lower()
+
+                    if email and userinfo.get("verified_email", False):
+
+                        login_user_id = stable_user_id_for_email(email)
+
+                        is_new_user = False
+
+                        if supabase:
+
+                            try:
+
+                                res = supabase.table("users").select("*").eq("email", email).execute()
+
+                                if res.data:
+
+                                    login_user_id = res.data[0]["id"]
+
+                                else:
+
+                                    supabase.table("users").insert({
+
+                                        "id": login_user_id, "email": email,
+
+                                        "license": "free_tier", "free_clips_used": 0,
+
+                                    }).execute()
+
+                                    is_new_user = True
+
+                            except Exception as dbe:
+
+                                print(f"Supabase login save error: {dbe}")
+
+
+
+                        redir = RedirectResponse("/?auth=success", status_code=302)
+
+                        redir.set_cookie("user_id", login_user_id, max_age=60 * 60 * 24 * 365, samesite="lax")
+
+
+
+                        if is_new_user:
+
+                            ref_id = request.cookies.get("clipai_ref", "")
+
+                            if ref_id:
+
+                                _apply_referral_bonus(login_user_id, ref_id)
+
+                                redir.delete_cookie("clipai_ref")
+
+                        return redir
+
+
+
+            # ── Branch: YouTube Channel Connection ────────────────────
+
+            if supabase:
+
+                update_data = {"youtube_access_token": access_token, "youtube_connected": True}
+
+                if refresh_token:
+
+                    update_data["youtube_refresh_token"] = refresh_token
+
+                supabase.table("users").update(update_data).eq("id", user_id).execute()
+
+
+
+            return RedirectResponse("/?youtube=connected")
+
     except Exception as e:
-        import urllib.parse
+
         error_msg = urllib.parse.quote(str(e))
+
         print(f"OAuth Error: {e}")
+
         return RedirectResponse(f"/?youtube=error&detail={error_msg}")
 
-# ─── Google Account Login & Registration (Strict Google Auth) ───────────────────
-GOOGLE_AUTH_SCOPES = ["openid", "email", "profile"]
+
+
+
 
 @app.get("/api/v1/auth/google")
+
 async def auth_google_login(request: Request):
-    """Initiates 1-click login/registration with verified Google Accounts using the authorized callback."""
-    import urllib.parse
-    import uuid
+
+    """Initiates 1-click login/registration with a verified Google account."""
+
     state = f"login_{uuid.uuid4()}"
+
     if redis_client:
+
         redis_client.setex(f"oauth_state:{state}", 600, "google_login")
 
     params = {
+
         "client_id": GOOGLE_CLIENT_ID,
+
         "redirect_uri": GOOGLE_REDIRECT_URI,
+
         "response_type": "code",
+
         "scope": " ".join(GOOGLE_AUTH_SCOPES),
+
         "access_type": "online",
+
         "prompt": "select_account",
-        "state": state
+
+        "state": state,
+
     }
+
     authorization_url = "https://accounts.google.com/o/oauth2/auth?" + urllib.parse.urlencode(params)
+
     return RedirectResponse(authorization_url)
 
-@app.get("/api/v1/auth/google/callback")
-async def auth_google_callback(request: Request, state: str = None, code: str = None):
-    """Verifies Google identity, links or creates a persistent account, and sets secure session cookie."""
-    if not code:
-        return RedirectResponse("/?auth=error&msg=missing_code")
 
-    try:
-        import httpx
-        token_data = {
-            "client_id": GOOGLE_CLIENT_ID,
-            "client_secret": GOOGLE_CLIENT_SECRET,
-            "code": code,
-            "grant_type": "authorization_code",
-            "redirect_uri": GOOGLE_AUTH_REDIRECT_URI
-        }
-        async with httpx.AsyncClient(timeout=15) as client:
-            token_res = await client.post("https://oauth2.googleapis.com/token", data=token_data)
-            if token_res.status_code != 200:
-                raise Exception("Failed to exchange code with Google")
-            tokens = token_res.json()
-            access_token = tokens.get("access_token")
-            
-            # Fetch verified Google user info
-            userinfo_res = await client.get("https://www.googleapis.com/oauth2/v2/userinfo", headers={"Authorization": f"Bearer {access_token}"})
-            if userinfo_res.status_code != 200:
-                raise Exception("Failed to fetch Google profile info")
-            userinfo = userinfo_res.json()
 
-        email = userinfo.get("email", "").lower()
-        if not email or not userinfo.get("verified_email", False):
-            raise Exception("Only verified Google accounts are permitted")
 
-        # Find or create user in Supabase
-        user_id = f"user_{abs(hash(email)) % 1000000:06d}"
-        license_tier = "free_tier"
 
-        if supabase:
-            try:
-                res = supabase.table("users").select("*").eq("email", email).execute()
-                if res.data and len(res.data) > 0:
-                    user_id = res.data[0]["id"]
-                    license_tier = res.data[0].get("license", "free_tier")
-                else:
-                    # New user registered with Google
-                    supabase.table("users").insert({
-                        "id": user_id,
-                        "email": email,
-                        "license": "free_tier",
-                        "free_clips_used": 0
-                    }).execute()
-            except Exception as dbe:
-                print(f"Supabase auth error: {dbe}")
+# NOTE: there used to be a second, separate /api/v1/auth/google/callback
 
-        redir = RedirectResponse("/?auth=success", status_code=302)
-        redir.set_cookie("user_id", user_id, max_age=60*60*24*365, samesite="lax")
-        return redir
-    except Exception as e:
-        import urllib.parse
-        err_enc = urllib.parse.quote(str(e))
-        return RedirectResponse(f"/?auth=error&detail={err_enc}")
+# route here that referenced an undefined GOOGLE_AUTH_REDIRECT_URI
 
+# variable — it would raise NameError on every single call. The
+
+# "login_" branch inside auth_youtube_callback above already handles
+
+# the full Google-login flow (that's the redirect_uri actually sent in
+
+# auth_google_login), so the broken duplicate route has been removed
+
+# rather than patched, to avoid two divergent implementations of the
+
+# same flow drifting apart again.
 
 ################################################################################
 # FILE: client_worker.py
 ################################################################################
 
+"""
+client_worker.py — Cloud worker daemon.
+
+Polls the website's job queue and runs the ClipAI pipeline for whatever
+comes back. Runs entirely on infrastructure you control (a VM, a
+container, a Render/Fly/Railway worker service, etc.) — it is NOT
+meant to be distributed to end users as a desktop app. WORKER_SECRET
+must be set in this process's environment and must match the value
+the web server (main.py) uses; it authenticates worker <-> server
+calls and is safe here specifically because it stays on infra you own.
+
+Run with:
+    python client_worker.py
+or under a process manager (systemd, supervisor, a Docker CMD, etc.)
+so it restarts automatically on crash.
+"""
+from __future__ import annotations
+
+import hashlib
+import hmac
+import importlib
+import json
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
+
 import requests
-import subprocess
-import threading
-from pathlib import Path
-from urllib.parse import urlparse, parse_qs
 
-# Immediately hide console window on Windows if spawned with one
-if sys.platform == "win32":
+from config import settings
+from logging_setup import get_logger
+
+log = get_logger("client_worker")
+
+LANE_USER_ID = os.environ.get("WORKER_LANE_USER_ID", "cloud")
+CONCURRENT_WORKERS = int(os.environ.get("CONCURRENT_WORKERS", "3"))
+POLL_INTERVAL_SEC = float(os.environ.get("WORKER_POLL_INTERVAL_SEC", "2"))
+
+_is_running = True
+
+
+def _signed_token(user_id: str) -> str:
+    if not settings.worker_secret:
+        raise RuntimeError("WORKER_SECRET is not set — cannot authenticate to the API server.")
+    return hmac.new(settings.worker_secret.encode(), user_id.encode(), hashlib.sha256).hexdigest()
+
+
+def update_yt_dlp() -> None:
+    """Keep the bundled yt-dlp binary current so YouTube-side format
+    changes don't silently break downloads."""
     try:
-        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-    except Exception:
-        pass
-    try:
-        import ctypes
-        kernel32 = ctypes.WinDLL("kernel32")
-        user32 = ctypes.WinDLL("user32")
-        hWnd = kernel32.GetConsoleWindow()
-        if hWnd:
-            user32.ShowWindow(hWnd, 0) # SW_HIDE
-    except Exception:
-        pass
-
-# Ensure pystray and pillow are available (Windows desktop tray only)
-pystray = None
-Image = None
-ImageDraw = None
-reg = None
-
-if sys.platform == "win32" and "--cloud" not in sys.argv:
-    try:
-        import pystray
-        from PIL import Image, ImageDraw
-        import winreg as reg
-    except ImportError:
-        try:
-            subprocess.run([sys.executable, "-m", "pip", "install", "pystray", "Pillow"], check=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            import pystray
-            from PIL import Image, ImageDraw
-            import winreg as reg
-        except Exception:
-            pass
-
-# Setup cross-platform paths
-HOME_DIR = Path.home() / ".clipai"
-BIN_DIR = HOME_DIR / "bin"
-os.makedirs(BIN_DIR, exist_ok=True)
-
-# Update system path so subprocesses can find bin files easily
-os.environ["PATH"] += os.pathsep + str(BIN_DIR)
-
-API_BASE_URL = os.environ.get("API_BASE_URL", "https://viralclip-saas.onrender.com")
-# Force inject it so imported modules like worker.py use it
-os.environ["API_BASE_URL"] = API_BASE_URL
-
-# For testing locally, uncomment the line below:
-# API_BASE_URL = "http://localhost:8000"
-# os.environ["API_BASE_URL"] = API_BASE_URL
-
-def get_user_id():
-    local_storage_path = Path.home() / ".clipai" / "user_id.txt"
-    
-    # 1. If passed as arg via URI handler from the website (e.g. clipai://start?user_id=user_12345)
-    if len(sys.argv) > 1:
-        for arg in sys.argv[1:]:
-            if arg.startswith("clipai://"):
-                from urllib.parse import urlparse, parse_qs
-                parsed = urlparse(arg)
-                qs = parse_qs(parsed.query)
-                if "user_id" in qs:
-                    uid = qs["user_id"][0]
-                    # Save it so future manual double-clicks work
-                    local_storage_path.parent.mkdir(parents=True, exist_ok=True)
-                    local_storage_path.write_text(uid)
-                    return uid
-
-    # 2. Check local storage file
-    if local_storage_path.exists():
-        stored_id = local_storage_path.read_text().strip()
-        if stored_id and "@" not in stored_id: # Ignore old broken emails
-            return stored_id
-
-    # 3. If no ID found, force them to use the website
-    print("\n" + "="*60)
-    print("Welcome to ClipAI Desktop Worker!")
-    print("="*60)
-    print("ERROR: No linked account found.")
-    print("Please go to your web dashboard and click 'Start Worker'.")
-    print("This will securely link your browser session to this app.")
-    print("="*60)
-    time.sleep(10)
-    os._exit(1)
-
-USER_ID = get_user_id()
-is_running = True
-
-def register_uri_scheme():
-    """Register the clipai:// protocol handler in Windows Registry."""
-    if sys.platform != "win32":
-        print("URI Registration only supported on Windows currently.")
-        return
-        
-    import winreg
-    try:
-        # HKEY_CURRENT_USER\Software\Classes\clipai
-        key_path = r"Software\Classes\clipai"
-        key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
-        winreg.SetValue(key, "", winreg.REG_SZ, "URL:ClipAI Protocol")
-        winreg.SetValueEx(key, "URL Protocol", 0, winreg.REG_SZ, "")
-        
-        # Path to this executable
-        exe_path = sys.executable if getattr(sys, 'frozen', False) else f'"{sys.executable}" "{os.path.abspath(__file__)}"'
-        
-        # shell\open\command
-        cmd_key = winreg.CreateKey(key, r"shell\open\command")
-        winreg.SetValue(cmd_key, "", winreg.REG_SZ, f'{exe_path} "%1"')
-        
-        winreg.CloseKey(cmd_key)
-        winreg.CloseKey(key)
-        print("Successfully registered clipai:// protocol handler.")
+        import yt_dlp
+        log.info("yt-dlp version: %s", yt_dlp.version.__version__)
     except Exception as e:
-        print(f"Failed to register URI scheme: {e}")
+        log.warning("Could not check yt-dlp version: %s", e)
 
-def update_yt_dlp():
-    """Download or auto-update standalone yt-dlp binary."""
-    print("Checking for yt-dlp updates...")
-    yt_dlp_exe = BIN_DIR / ("yt-dlp.exe" if sys.platform == "win32" else "yt-dlp")
-    try:
-        if not yt_dlp_exe.exists():
-            print("yt-dlp not found. Downloading latest standalone binary...")
-            if sys.platform == "win32":
-                url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
-            elif sys.platform == "darwin":
-                url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos"
-            else:
-                url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"
-            response = requests.get(url, stream=True)
-            with open(yt_dlp_exe, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            if sys.platform != "win32":
-                os.chmod(yt_dlp_exe, 0o755)
-        else:
-            subprocess.run([str(yt_dlp_exe), "-U"], check=True, capture_output=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        print("yt-dlp is up to date!")
-    except Exception as e:
-        print(f"Failed to setup yt-dlp: {e}")
 
-def sync_live_pipeline_scripts():
-    """Dynamically fetches the latest production fixes from the cloud server and updates local modules in real-time."""
+def sync_live_pipeline_scripts() -> None:
     try:
-        res = requests.get(f"{API_BASE_URL}/api/v1/worker/scripts", timeout=10)
+        token = _signed_token(LANE_USER_ID)
+        res = requests.get(
+            f"{settings.api_base_url}/api/v1/worker/scripts",
+            params={"user_id": LANE_USER_ID, "token": token},
+            timeout=10,
+        )
         if res.status_code == 200:
-            data = res.json()
-            scripts = data.get("scripts", {})
+            scripts = res.json().get("scripts", {})
+            base_dir = os.path.dirname(os.path.abspath(__file__))
             for name, code in scripts.items():
-                target_path = Path(__file__).resolve().parent / name
                 try:
-                    target_path.write_text(code, encoding="utf-8")
-                except Exception:
-                    pass
-            print(f"[Worker] Live hot-sync complete: {len(scripts)} pipeline scripts updated to latest version.")
+                    with open(os.path.join(base_dir, name), "w", encoding="utf-8") as f:
+                        f.write(code)
+                except Exception as e:
+                    log.warning("Failed to write updated %s: %s", name, e)
+            log.info("Live hot-sync complete: %d pipeline scripts updated.", len(scripts))
+        else:
+            log.warning("Hot-sync request failed with status %s", res.status_code)
     except Exception as e:
-        print(f"[Worker] Live hot-sync warning (offline/cached): {e}")
+        log.warning("Live hot-sync warning (offline/cached): %s", e)
 
-def run_worker_loop():
-    global is_running
-    print(f"Starting ClipAI Companion Worker for user: {USER_ID}")
-    
-    # Always pull latest fixes live before starting loop
+
+def _load_pipeline():
+    import worker as worker_module
+    import hot_pipeline as hot_pipeline_module
+    importlib.reload(hot_pipeline_module)
+    importlib.reload(worker_module)
+    return worker_module
+
+
+def process_job(worker_module, job: dict) -> None:
+    job_id = job.get("job_id", "unknown")
+    job_user_id = job.get("user_id", LANE_USER_ID)
+    log.info("Processing job %s for user %s (niche=%r)", job_id, job_user_id, job.get("niche"))
+    try:
+        clip_job = worker_module.ClipJob.from_queue_payload(job)
+        worker_module.run_clip_pipeline(clip_job)
+    except Exception as pipeline_err:
+        log.exception("Pipeline error on job %s", job_id)
+        try:
+            requests.post(
+                f"{settings.api_base_url}/api/v1/worker/complete",
+                json={"job_id": job_id, "status": "error", "message": str(pipeline_err)},
+                params={"user_id": job_user_id},
+                timeout=10,
+            )
+        except Exception:
+            log.warning("Could not report pipeline error back to the server for job %s", job_id)
+
+
+def run_worker_loop() -> None:
+    global _is_running
+    log.info("Starting ClipAI cloud worker (lane=%s)", LANE_USER_ID)
+
+    update_yt_dlp()
     sync_live_pipeline_scripts()
 
     try:
-        import importlib
-        import worker
-        import hot_pipeline
-        importlib.reload(worker)
-        importlib.reload(hot_pipeline)
-        from worker import run_clip_pipeline
-        # Hot pipeline ready on demand
-        print("[HotPipeline] Engine active. Cache is clean and ready.")
+        worker_module = _load_pipeline()
     except ImportError as e:
-        print(f"Failed to load pipeline modules: {e}")
+        log.error("Failed to load pipeline modules: %s", e)
         return
 
-    from concurrent.futures import ThreadPoolExecutor
-    # 3 concurrent worker clone threads to process multiple users simultaneously
-    CONCURRENT_WORKERS = int(os.environ.get("CONCURRENT_WORKERS", "3"))
     executor = ThreadPoolExecutor(max_workers=CONCURRENT_WORKERS)
-    print(f"[Worker Pool] Initialized with {CONCURRENT_WORKERS} concurrent execution slots.")
+    log.info("Worker pool initialized with %d concurrent execution slots.", CONCURRENT_WORKERS)
 
-    def process_job(job):
-        job_id = job["job_id"]
-        niche = job["niche"]
-        job_user_id = job.get("user_id", USER_ID)
-        is_free_tier = job.get("is_free_tier", False)
-        auto_upload = job.get("auto_upload", True)
-        layout = job.get("layout", "split_screen")
-        subtitle_style = job.get("subtitle_style", "hormozi")
-        print(f"\n[Worker Slot] Processing job: {job_id} for user: {job_user_id} (niche={niche})")
-        try:
-            run_clip_pipeline(niche, job_user_id, job_id, is_free_tier, auto_upload=auto_upload, layout=layout, subtitle_style=subtitle_style)
-        except Exception as pipeline_err:
-            print(f"Pipeline error on job {job_id}: {pipeline_err}")
-            requests.post(f"{API_BASE_URL}/api/v1/worker/complete", json={
-                "job_id": job_id, "status": "error", "message": str(pipeline_err)
-            }, params={"user_id": job_user_id})
+    token = _signed_token(LANE_USER_ID)
+    consecutive_errors = 0
 
-    while is_running:
+    while _is_running:
         try:
-            res = requests.get(f"{API_BASE_URL}/api/v1/worker/poll", params={"user_id": USER_ID}, timeout=10)
+            res = requests.get(
+                f"{settings.api_base_url}/api/v1/worker/poll",
+                params={"user_id": LANE_USER_ID, "token": token},
+                timeout=10,
+            )
             if res.status_code == 200:
-                data = res.json()
-                job = data.get("job")
+                job = res.json().get("job")
                 if job:
-                    executor.submit(process_job, job)
-        except requests.exceptions.RequestException:
-            pass
+                    executor.submit(process_job, worker_module, job)
+                consecutive_errors = 0
+            else:
+                consecutive_errors += 1
+        except requests.exceptions.RequestException as e:
+            consecutive_errors += 1
+            log.warning("Poll request failed: %s", e)
         except Exception as e:
-            print(f"Unexpected polling error: {e}")
-        time.sleep(2)
+            consecutive_errors += 1
+            log.exception("Unexpected polling error")
 
-def start_local_stream_server():
-    """Starts a local HTTP server on port 58921 to stream rendered draft videos to the web browser."""
-    from http.server import SimpleHTTPRequestHandler, HTTPServer
-    import urllib.parse
-    
-    video_dir = HOME_DIR / "generated_videos"
-    video_dir.mkdir(parents=True, exist_ok=True)
-    
-    class MediaStreamHandler(SimpleHTTPRequestHandler):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, directory=str(video_dir), **kwargs)
-            
-        def end_headers(self):
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
-            self.send_header('Access-Control-Allow-Headers', 'Range, Content-Type')
-            super().end_headers()
-            
-        def do_OPTIONS(self):
-            self.send_response(200)
-            self.end_headers()
-            
-        def log_message(self, format, *args):
-            pass  # Keep console quiet
-            
-    try:
-        httpd = HTTPServer(('127.0.0.1', 58921), MediaStreamHandler)
-        print("[Worker] Local video streaming server active at http://127.0.0.1:58921")
-        httpd.serve_forever()
-    except Exception as e:
-        print(f"[Worker] Local stream server error: {e}")
+        sleep_for = POLL_INTERVAL_SEC * min(consecutive_errors + 1, 10)
+        time.sleep(sleep_for)
 
-def set_autostart(enable=True):
-    key = reg.HKEY_CURRENT_USER
-    key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-    try:
-        registry_key = reg.OpenKey(key, key_path, 0, reg.KEY_ALL_ACCESS)
-        if enable:
-            # We add quotes around sys.executable to ensure paths with spaces work safely
-            cmd = f'"{sys.executable}"'
-            reg.SetValueEx(registry_key, "ClipAI_Worker", 0, reg.REG_SZ, cmd)
-        else:
-            try:
-                reg.DeleteValue(registry_key, "ClipAI_Worker")
-            except FileNotFoundError:
-                pass
-        reg.CloseKey(registry_key)
-    except Exception as e:
-        print(f"Failed to set startup: {e}")
 
-def check_autostart():
-    key = reg.HKEY_CURRENT_USER
-    key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-    try:
-        registry_key = reg.OpenKey(key, key_path, 0, reg.KEY_READ)
-        value, _ = reg.QueryValueEx(registry_key, "ClipAI_Worker")
-        reg.CloseKey(registry_key)
-        return True
-    except FileNotFoundError:
-        return False
+def shutdown(*_args) -> None:
+    global _is_running
+    log.info("Shutdown signal received, stopping after current jobs finish...")
+    _is_running = False
 
-def create_image():
-    # Generate a sleek crimson icon for the system tray
-    image = Image.new('RGB', (64, 64), color=(220, 38, 38))
-    d = ImageDraw.Draw(image)
-    d.rectangle([16, 16, 48, 48], fill="white")
-    return image
-
-def setup_tray():
-    autostart_enabled = check_autostart()
-
-    def toggle_autostart(icon, item):
-        nonlocal autostart_enabled
-        autostart_enabled = not autostart_enabled
-        set_autostart(autostart_enabled)
-        # Update menu
-        icon.update_menu()
-
-    def quit_action(icon, item):
-        global is_running
-        is_running = False
-        icon.stop()
-        os._exit(0)
-        
-    menu = pystray.Menu(
-        pystray.MenuItem("Worker Active (🟢)", lambda: None, enabled=False),
-        pystray.MenuItem("Run on Startup", toggle_autostart, checked=lambda item: autostart_enabled),
-        pystray.MenuItem("Quit", quit_action)
-    )
-    icon = pystray.Icon("ClipAI", create_image(), "ClipAI Worker", menu)
-    icon.run()
 
 if __name__ == "__main__":
-    IS_CLOUD = "--cloud" in sys.argv
-    IS_CLI = "--cli" in sys.argv
-
-    if IS_CLOUD:
-        # ── Cloud/Linux daemon mode ──────────────────────────────
-        # No tray, no Windows registry, no local stream server
-        print("╔══════════════════════════════════════╗")
-        print("║   ClipAI Cloud Worker (Linux/Cloud)  ║")
-        print("╚══════════════════════════════════════╝")
-        update_yt_dlp()
-        run_worker_loop()
-
-    elif len(sys.argv) > 1:
-        arg = sys.argv[1]
-        if arg == "--register":
-            register_uri_scheme()
-            sys.exit(0)
-        elif arg.startswith("clipai://"):
-            parsed = urlparse(arg)
-            qs = parse_qs(parsed.query)
-            if "user_id" in qs:
-                USER_ID = qs["user_id"][0]
-
-        update_yt_dlp()
-        stream_thread = threading.Thread(target=start_local_stream_server, daemon=True)
-        stream_thread.start()
-        worker_thread = threading.Thread(target=run_worker_loop, daemon=True)
-        worker_thread.start()
-        if IS_CLI:
-            print("Running in CLI mode. Press Ctrl+C to exit.")
-            while True:
-                time.sleep(1)
-        else:
-            setup_tray()
-    else:
-        # Default: desktop double-click
-        register_uri_scheme()
-        update_yt_dlp()
-        stream_thread = threading.Thread(target=start_local_stream_server, daemon=True)
-        stream_thread.start()
-        worker_thread = threading.Thread(target=run_worker_loop, daemon=True)
-        worker_thread.start()
-        if IS_CLI:
-            print("Running in CLI mode. Press Ctrl+C to exit.")
-            while True:
-                time.sleep(1)
-        else:
-            setup_tray()
+    import signal
+    signal.signal(signal.SIGTERM, shutdown)
+    signal.signal(signal.SIGINT, shutdown)
+    run_worker_loop()
 
 
 ################################################################################
