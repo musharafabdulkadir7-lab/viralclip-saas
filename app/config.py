@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     youtube_api_key: str = ""
     worker_secret: str = Field(default="", min_length=0)
     admin_secret: str = ""
+    keepalive_secret: str = ""
     api_base_url: str = "http://localhost:8000"
 
     google_client_id: str = ""

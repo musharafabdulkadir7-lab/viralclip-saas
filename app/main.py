@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import get_settings
 from .logging_conf import get_logger, request_id_var
 from .redis_client import ping as redis_ping
-from .routers import auth, billing, jobs, profile, worker_api
+from .routers import auth, billing, jobs, presence, profile, worker_api
 from .services.scheduler import start_scheduler, stop_scheduler
 
 settings = get_settings()
@@ -63,6 +63,7 @@ def create_app() -> FastAPI:
     app.include_router(worker_api.router)
     app.include_router(billing.router)
     app.include_router(profile.router)
+    app.include_router(presence.router)
 
     base_dir = Path(__file__).resolve().parent.parent / "frontend"
     if not base_dir.exists():

@@ -4,6 +4,7 @@
 # Includes: app/, pipeline/, worker/, backend/tests/, worker/tests/, frontend/
 # Sourcing modes: my_upload, my_channel, partner_channel, public_domain
 # Multi-tiered Redis failover: REDIS_URL, REDIS_URL_2, REDIS_URL_3 (Upstash TLS)
+# Real-time visitor presence tracking: app/routers/presence.py
 # ==============================================================================
 
 
@@ -55,6 +56,7 @@ class Settings(BaseSettings):
     youtube_api_key: str = ""
     worker_secret: str = Field(default="", min_length=0)
     admin_secret: str = ""
+    keepalive_secret: str = ""
     api_base_url: str = "http://localhost:8000"
 
     google_client_id: str = ""
@@ -1491,6 +1493,57 @@ async def worker_heartbeat(user_id: str):
     return {"alive": bool(alive)}
 
 ################################################################################
+# FILE: app/routers/presence.py
+################################################################################
+
+from __future__ import annotations
+
+import time
+
+from fastapi import APIRouter, Header
+
+from ..config import get_settings
+from ..redis_client import get_redis
+
+router = APIRouter(prefix="/api/v1/presence", tags=["presence"])
+settings = get_settings()
+
+PRESENCE_KEY = "presence:visitors"
+PRESENCE_WINDOW_SEC = 45
+
+
+@router.post("/ping")
+async def ping(visitor_id: str, x_keepalive_secret: str = Header(default="")):
+    if settings.keepalive_secret and x_keepalive_secret == settings.keepalive_secret:
+        return {"status": "ignored_keepalive"}
+
+    r = get_redis()
+    if r is None:
+        return {"status": "no_redis"}
+    try:
+        now = time.time()
+        await r.zadd(PRESENCE_KEY, {visitor_id: now})
+        await r.zremrangebyscore(PRESENCE_KEY, 0, now - PRESENCE_WINDOW_SEC)
+        return {"status": "ok"}
+    except Exception:
+        return {"status": "error"}
+
+
+@router.get("/count")
+async def count():
+    r = get_redis()
+    if r is None:
+        return {"active": 0}
+    try:
+        now = time.time()
+        await r.zremrangebyscore(PRESENCE_KEY, 0, now - PRESENCE_WINDOW_SEC)
+        n = await r.zcard(PRESENCE_KEY)
+        return {"active": n}
+    except Exception:
+        return {"active": 0}
+
+
+################################################################################
 # FILE: app/routers/billing.py
 ################################################################################
 
@@ -1691,7 +1744,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import get_settings
 from .logging_conf import get_logger, request_id_var
 from .redis_client import ping as redis_ping
-from .routers import auth, billing, jobs, profile, worker_api
+from .routers import auth, billing, jobs, presence, profile, worker_api
 from .services.scheduler import start_scheduler, stop_scheduler
 
 settings = get_settings()
@@ -1743,6 +1796,7 @@ def create_app() -> FastAPI:
     app.include_router(worker_api.router)
     app.include_router(billing.router)
     app.include_router(profile.router)
+    app.include_router(presence.router)
 
     base_dir = Path(__file__).resolve().parent.parent / "frontend"
     if not base_dir.exists():
@@ -4626,3 +4680,21 @@ document.addEventListener('DOMContentLoaded', () => {
   initStudio();
   checkAuthAndProfile();
 });
+
+function getVisitorId() {
+  let id = sessionStorage.getItem('clipai_visitor_id');
+  if (!id) {
+    id = 'v_' + Math.random().toString(36).slice(2) + Date.now();
+    sessionStorage.setItem('clipai_visitor_id', id);
+  }
+  return id;
+}
+
+async function sendPresencePing() {
+  try {
+    await fetch(`/api/v1/presence/ping?visitor_id=${getVisitorId()}`, { method: 'POST' });
+  } catch (e) {}
+}
+
+sendPresencePing();
+setInterval(sendPresencePing, 20000);

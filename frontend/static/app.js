@@ -612,3 +612,21 @@ document.addEventListener('DOMContentLoaded', () => {
   initStudio();
   checkAuthAndProfile();
 });
+
+function getVisitorId() {
+  let id = sessionStorage.getItem('clipai_visitor_id');
+  if (!id) {
+    id = 'v_' + Math.random().toString(36).slice(2) + Date.now();
+    sessionStorage.setItem('clipai_visitor_id', id);
+  }
+  return id;
+}
+
+async function sendPresencePing() {
+  try {
+    await fetch(`/api/v1/presence/ping?visitor_id=${getVisitorId()}`, { method: 'POST' });
+  } catch (e) {}
+}
+
+sendPresencePing();
+setInterval(sendPresencePing, 20000);
