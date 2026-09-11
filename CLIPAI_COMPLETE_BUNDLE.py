@@ -5323,6 +5323,7 @@ async function loadAutoPost() {
     if (!res.ok) return;
     const cfg = await res.json();
     const enabledEl = document.getElementById('ap-enabled');
+    const nicheEl = document.getElementById('ap-niche');
     const rightsEl = document.getElementById('ap-rights-check');
 
     if (enabledEl) enabledEl.checked = Boolean(cfg.enabled);
