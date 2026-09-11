@@ -407,15 +407,17 @@ function updateTicks(pct) {
 }
 
 // ─── Workplace (Review & Publish Drafts) ───────────────────────────────────
+// ─── Workplace (Review & Publish Drafts) ───────────────────────────────────
 async function loadWorkplace() {
   const grid = document.getElementById('workplace-grid');
   if (!grid) return;
   grid.innerHTML = '<div class="empty">Loading drafts…</div>';
 
   try {
-    const res = await fetch('/api/v1/workplace/drafts');
+    const res = await fetch('/api/v1/workplace/clips');
     if (!res.ok) throw new Error('Failed to load drafts');
-    const drafts = await res.json();
+    const data = await res.json();
+    const drafts = data.clips || data.drafts || (Array.isArray(data) ? data : []);
 
     if (!drafts || drafts.length === 0) {
       grid.innerHTML = '<div class="empty">No drafts waiting for review. Render a clip with auto-post turned off to review it here first.</div>';
@@ -444,7 +446,7 @@ async function loadWorkplace() {
 
 async function publishDraft(clipId) {
   try {
-    const res = await fetch('/api/v1/workplace/publish', {
+    const res = await fetch('/api/v1/clip/publish-draft', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clip_id: clipId })
@@ -476,7 +478,7 @@ async function loadClips() {
   grid.innerHTML = '<div class="empty">Loading channel clips…</div>';
 
   try {
-    const res = await fetch('/api/v1/analytics');
+    const res = await fetch('/api/v1/clips');
     if (!res.ok) throw new Error('Failed to load clips');
     const data = await res.json();
 

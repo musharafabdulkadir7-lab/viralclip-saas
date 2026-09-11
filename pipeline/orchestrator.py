@@ -54,17 +54,21 @@ def _send_webhook(event: dict) -> None:
 def update_job_status(job_id: str, status: str, progress: int, message: str, url: str = "",
                        title: str = "", niche: str = "", user_id: str = "") -> None:
     log.info("[%3d%%] %s: %s", progress, status, message)
+    uid = user_id or "unknown"
     event = {"job_id": job_id, "status": status, "progress": progress, "message": message,
-              "url": url, "title": title, "niche": niche, "user_id": user_id or "unknown"}
+              "url": url, "title": title, "niche": niche, "user_id": uid}
     _send_webhook(event)
     try:
         if status in ("complete", "draft_ready", "error"):
+            token = sign_worker_token(uid, purpose="complete")
             requests.post(f"{settings.api_base_url}/api/v1/worker/complete",
                            json={"job_id": job_id, "status": status, "message": message, "url": url, "title": title, "niche": niche},
-                           params={"user_id": user_id or "unknown"}, timeout=10)
+                           params={"user_id": uid, "token": token}, timeout=10)
         else:
+            token = sign_worker_token(uid, purpose="progress")
             requests.post(f"{settings.api_base_url}/api/v1/worker/progress",
-                           json={"job_id": job_id, "status": status, "progress": progress, "message": message, "url": url}, timeout=5)
+                           json={"job_id": job_id, "status": status, "progress": progress, "message": message, "url": url},
+                           params={"user_id": uid, "token": token}, timeout=5)
     except Exception as e:
         log.warning("Failed to update cloud progress: %s", e)
 

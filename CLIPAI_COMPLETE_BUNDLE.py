@@ -1344,13 +1344,15 @@ async def get_job_status(job_id: str, user_id: str = Depends(require_user)):
 
 
 @router.get("/workplace/clips")
+@router.get("/workplace/drafts")
 async def list_workplace_clips(user_id: str = Depends(require_user)):
     clips = ClipRepo.list_for_user(user_id)
     drafts = [c for c in clips if not _is_live_youtube_url(c.get("youtube_url", ""))]
-    return {"clips": drafts}
+    return {"clips": drafts, "drafts": drafts}
 
 
 @router.get("/clips")
+@router.get("/analytics")
 async def list_published_clips(user_id: str = Depends(require_user)):
     clips = ClipRepo.list_for_user(user_id)
     live = [c for c in clips if _is_live_youtube_url(c.get("youtube_url", ""))]
@@ -1364,6 +1366,7 @@ async def list_published_clips(user_id: str = Depends(require_user)):
 
 
 @router.post("/clip/publish-draft")
+@router.post("/workplace/publish")
 async def publish_draft(payload: PublishDraftRequest, user_id: str = Depends(require_user)):
     ok = ClipRepo.update(payload.clip_id, user_id, {
         "status": "published",
@@ -1427,7 +1430,8 @@ async def worker_ack(stream_id: str, job_id: str, user_id: str, token: str = "")
 
 
 @router.post("/complete")
-async def worker_complete(payload: JobCompletePayload, user_id: str):
+async def worker_complete(payload: JobCompletePayload, user_id: str, token: str = ""):
+    _auth(user_id, token, purpose="complete")
     await job_queue.set_status(payload.job_id, payload.status, 100, payload.message, payload.url)
     if payload.status in ("complete", "draft_ready"):
         ClipRepo.insert({
@@ -1439,7 +1443,8 @@ async def worker_complete(payload: JobCompletePayload, user_id: str):
 
 
 @router.post("/progress")
-async def worker_progress(payload: ProgressPayload):
+async def worker_progress(payload: ProgressPayload, user_id: str = "unknown", token: str = ""):
+    _auth(user_id, token, purpose="progress")
     await job_queue.set_status(payload.job_id, payload.status, payload.progress, payload.message, payload.url)
     return {"status": "ok"}
 
@@ -1460,11 +1465,12 @@ async def get_youtube_creds(user_id: str, token: str = ""):
 
 
 @router.post("/analyze-transcript")
-async def analyze_transcript(payload: AnalyzeRequest, user_id: str):
+async def analyze_transcript(payload: AnalyzeRequest, user_id: str, token: str = ""):
     """Runs the viral-moment selection. Kept server-side so GEMINI_API_KEY
     never has to live on worker infra. Falls back to a pure-python
     keyword-density heuristic if no key is configured — same fallback
     idea as v2, refactored into services/clip_analysis.py for testability."""
+    _auth(user_id, token, purpose="analyze")
     from ..services.clip_analysis import analyze
     return await analyze(payload.transcript, payload.niche)
 
@@ -2411,9 +2417,11 @@ _RETRYABLE = (requests.ConnectionError, requests.Timeout)
 @retry(stop=stop_after_attempt(settings.max_retries), wait=wait_exponential(multiplier=1, min=1, max=6),
        retry=retry_if_exception_type(_RETRYABLE), reraise=True)
 def _call_backend(transcript: str, niche: str, user_id: str) -> dict:
+    from .security import sign_worker_token
+    token = sign_worker_token(user_id, purpose="analyze")
     res = requests.post(
         f"{settings.api_base_url}/api/v1/worker/analyze-transcript",
-        json={"transcript": transcript, "niche": niche}, params={"user_id": user_id}, timeout=30,
+        json={"transcript": transcript, "niche": niche}, params={"user_id": user_id, "token": token}, timeout=30,
     )
     res.raise_for_status()
     return res.json()
@@ -2902,17 +2910,21 @@ def _send_webhook(event: dict) -> None:
 def update_job_status(job_id: str, status: str, progress: int, message: str, url: str = "",
                        title: str = "", niche: str = "", user_id: str = "") -> None:
     log.info("[%3d%%] %s: %s", progress, status, message)
+    uid = user_id or "unknown"
     event = {"job_id": job_id, "status": status, "progress": progress, "message": message,
-              "url": url, "title": title, "niche": niche, "user_id": user_id or "unknown"}
+              "url": url, "title": title, "niche": niche, "user_id": uid}
     _send_webhook(event)
     try:
         if status in ("complete", "draft_ready", "error"):
+            token = sign_worker_token(uid, purpose="complete")
             requests.post(f"{settings.api_base_url}/api/v1/worker/complete",
                            json={"job_id": job_id, "status": status, "message": message, "url": url, "title": title, "niche": niche},
-                           params={"user_id": user_id or "unknown"}, timeout=10)
+                           params={"user_id": uid, "token": token}, timeout=10)
         else:
+            token = sign_worker_token(uid, purpose="progress")
             requests.post(f"{settings.api_base_url}/api/v1/worker/progress",
-                           json={"job_id": job_id, "status": status, "progress": progress, "message": message, "url": url}, timeout=5)
+                           json={"job_id": job_id, "status": status, "progress": progress, "message": message, "url": url},
+                           params={"user_id": uid, "token": token}, timeout=5)
     except Exception as e:
         log.warning("Failed to update cloud progress: %s", e)
 
@@ -3142,9 +3154,10 @@ def process_job(job: dict, stream_id: str) -> None:
     except Exception as e:
         log.exception("Pipeline error on job %s", job_id)
         try:
+            token = sign_worker_token(job_user_id, purpose="complete")
             requests.post(f"{settings.api_base_url}/api/v1/worker/complete",
                            json={"job_id": job_id, "status": "error", "message": str(e)},
-                           params={"user_id": job_user_id}, timeout=10)
+                           params={"user_id": job_user_id, "token": token}, timeout=10)
         except Exception:
             log.warning("Could not report pipeline error for job %s", job_id)
     finally:
@@ -3250,6 +3263,13 @@ def test_worker_token_wrong_purpose_rejected():
 def test_worker_token_wrong_user_rejected():
     token = sign_worker_token("user_abc", purpose="poll")
     assert not verify_worker_token("user_xyz", token, purpose="poll")
+
+
+def test_worker_token_scopes_complete_progress_analyze():
+    for purpose in ("complete", "progress", "analyze"):
+        token = sign_worker_token("user_abc", purpose=purpose)
+        assert verify_worker_token("user_abc", token, purpose=purpose)
+        assert not verify_worker_token("user_abc", token, purpose="poll")
 
 ################################################################################
 # FILE: backend/tests/test_schemas.py
@@ -4475,15 +4495,17 @@ function updateTicks(pct) {
 }
 
 // ─── Workplace (Review & Publish Drafts) ───────────────────────────────────
+// ─── Workplace (Review & Publish Drafts) ───────────────────────────────────
 async function loadWorkplace() {
   const grid = document.getElementById('workplace-grid');
   if (!grid) return;
   grid.innerHTML = '<div class="empty">Loading drafts…</div>';
 
   try {
-    const res = await fetch('/api/v1/workplace/drafts');
+    const res = await fetch('/api/v1/workplace/clips');
     if (!res.ok) throw new Error('Failed to load drafts');
-    const drafts = await res.json();
+    const data = await res.json();
+    const drafts = data.clips || data.drafts || (Array.isArray(data) ? data : []);
 
     if (!drafts || drafts.length === 0) {
       grid.innerHTML = '<div class="empty">No drafts waiting for review. Render a clip with auto-post turned off to review it here first.</div>';
@@ -4512,7 +4534,7 @@ async function loadWorkplace() {
 
 async function publishDraft(clipId) {
   try {
-    const res = await fetch('/api/v1/workplace/publish', {
+    const res = await fetch('/api/v1/clip/publish-draft', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clip_id: clipId })
@@ -4544,7 +4566,7 @@ async function loadClips() {
   grid.innerHTML = '<div class="empty">Loading channel clips…</div>';
 
   try {
-    const res = await fetch('/api/v1/analytics');
+    const res = await fetch('/api/v1/clips');
     if (!res.ok) throw new Error('Failed to load clips');
     const data = await res.json();
 

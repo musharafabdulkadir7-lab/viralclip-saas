@@ -79,9 +79,11 @@ _RETRYABLE = (requests.ConnectionError, requests.Timeout)
 @retry(stop=stop_after_attempt(settings.max_retries), wait=wait_exponential(multiplier=1, min=1, max=6),
        retry=retry_if_exception_type(_RETRYABLE), reraise=True)
 def _call_backend(transcript: str, niche: str, user_id: str) -> dict:
+    from .security import sign_worker_token
+    token = sign_worker_token(user_id, purpose="analyze")
     res = requests.post(
         f"{settings.api_base_url}/api/v1/worker/analyze-transcript",
-        json={"transcript": transcript, "niche": niche}, params={"user_id": user_id}, timeout=30,
+        json={"transcript": transcript, "niche": niche}, params={"user_id": user_id, "token": token}, timeout=30,
     )
     res.raise_for_status()
     return res.json()

@@ -43,9 +43,10 @@ def process_job(job: dict, stream_id: str) -> None:
     except Exception as e:
         log.exception("Pipeline error on job %s", job_id)
         try:
+            token = sign_worker_token(job_user_id, purpose="complete")
             requests.post(f"{settings.api_base_url}/api/v1/worker/complete",
                            json={"job_id": job_id, "status": "error", "message": str(e)},
-                           params={"user_id": job_user_id}, timeout=10)
+                           params={"user_id": job_user_id, "token": token}, timeout=10)
         except Exception:
             log.warning("Could not report pipeline error for job %s", job_id)
     finally:

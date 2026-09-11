@@ -38,7 +38,8 @@ async def worker_ack(stream_id: str, job_id: str, user_id: str, token: str = "")
 
 
 @router.post("/complete")
-async def worker_complete(payload: JobCompletePayload, user_id: str):
+async def worker_complete(payload: JobCompletePayload, user_id: str, token: str = ""):
+    _auth(user_id, token, purpose="complete")
     await job_queue.set_status(payload.job_id, payload.status, 100, payload.message, payload.url)
     if payload.status in ("complete", "draft_ready"):
         ClipRepo.insert({
@@ -50,7 +51,8 @@ async def worker_complete(payload: JobCompletePayload, user_id: str):
 
 
 @router.post("/progress")
-async def worker_progress(payload: ProgressPayload):
+async def worker_progress(payload: ProgressPayload, user_id: str = "unknown", token: str = ""):
+    _auth(user_id, token, purpose="progress")
     await job_queue.set_status(payload.job_id, payload.status, payload.progress, payload.message, payload.url)
     return {"status": "ok"}
 
@@ -71,11 +73,12 @@ async def get_youtube_creds(user_id: str, token: str = ""):
 
 
 @router.post("/analyze-transcript")
-async def analyze_transcript(payload: AnalyzeRequest, user_id: str):
+async def analyze_transcript(payload: AnalyzeRequest, user_id: str, token: str = ""):
     """Runs the viral-moment selection. Kept server-side so GEMINI_API_KEY
     never has to live on worker infra. Falls back to a pure-python
     keyword-density heuristic if no key is configured — same fallback
     idea as v2, refactored into services/clip_analysis.py for testability."""
+    _auth(user_id, token, purpose="analyze")
     from ..services.clip_analysis import analyze
     return await analyze(payload.transcript, payload.niche)
 

@@ -83,13 +83,15 @@ async def get_job_status(job_id: str, user_id: str = Depends(require_user)):
 
 
 @router.get("/workplace/clips")
+@router.get("/workplace/drafts")
 async def list_workplace_clips(user_id: str = Depends(require_user)):
     clips = ClipRepo.list_for_user(user_id)
     drafts = [c for c in clips if not _is_live_youtube_url(c.get("youtube_url", ""))]
-    return {"clips": drafts}
+    return {"clips": drafts, "drafts": drafts}
 
 
 @router.get("/clips")
+@router.get("/analytics")
 async def list_published_clips(user_id: str = Depends(require_user)):
     clips = ClipRepo.list_for_user(user_id)
     live = [c for c in clips if _is_live_youtube_url(c.get("youtube_url", ""))]
@@ -103,6 +105,7 @@ async def list_published_clips(user_id: str = Depends(require_user)):
 
 
 @router.post("/clip/publish-draft")
+@router.post("/workplace/publish")
 async def publish_draft(payload: PublishDraftRequest, user_id: str = Depends(require_user)):
     ok = ClipRepo.update(payload.clip_id, user_id, {
         "status": "published",
