@@ -129,3 +129,55 @@ def test_atomic_free_tier_consumption_and_refund():
     allowed3, count3 = UserRepo.atomic_consume_free_clip(uid, limit=1)
     assert allowed3 is True
     assert count3 == 1
+
+
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+
+
+@pytest.mark.asyncio
+async def test_failover_redis_fails_over_on_connection_error():
+    from app.redis_client import FailoverRedis
+
+    fr = FailoverRedis("redis://primary-down:6379", "redis://secondary-up:6379")
+
+    # Mock clients
+    mock_primary = AsyncMock()
+    mock_primary.get.side_effect = ConnectionError("Connection refused")
+    mock_secondary = AsyncMock()
+    mock_secondary.get.return_value = "cached_val"
+
+    fr.primary = mock_primary
+    fr.secondary = mock_secondary
+
+    res = await fr.get("mykey")
+    assert res == "cached_val"
+    assert mock_primary.get.called
+    assert mock_secondary.get.called
+
+
+@pytest.mark.asyncio
+async def test_start_google_login_handles_redis_down_and_missing_client_id(monkeypatch):
+    from app.config import get_settings
+    from app.routers.auth import start_google_login
+
+    settings = get_settings()
+
+    # 1. When google_client_id is not configured, redirect with error without 500 crash
+    monkeypatch.setattr(settings, "google_client_id", "")
+    resp_unconfigured = await start_google_login()
+    assert resp_unconfigured.status_code == 307 or resp_unconfigured.status_code == 302
+    assert "detail=not_configured" in resp_unconfigured.headers["location"]
+
+    # 2. When google_client_id is set, even if Redis throws connection error, redirects safely and sets cookie fallback
+    monkeypatch.setattr(settings, "google_client_id", "test_google_client_id")
+    import app.routers.auth as auth_mod
+    broken_redis = AsyncMock()
+    broken_redis.setex.side_effect = ConnectionError("Redis host unreachable")
+    monkeypatch.setattr(auth_mod, "get_redis", lambda: broken_redis)
+
+    resp_with_broken_redis = await start_google_login()
+    assert resp_with_broken_redis.status_code == 307 or resp_with_broken_redis.status_code == 302
+    assert "accounts.google.com" in resp_with_broken_redis.headers["location"]
+    # Verify fallback cookie was set
+    assert "clipai_oauth_login" in resp_with_broken_redis.headers.get("set-cookie", "")

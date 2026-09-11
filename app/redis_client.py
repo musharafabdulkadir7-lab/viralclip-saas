@@ -36,14 +36,17 @@ class FailoverRedis:
     def __getattr__(self, name):
         async def _call(*args, **kwargs):
             last_err = None
-            for client in await self._clients():
+            clients = await self._clients()
+            for idx, client in enumerate(clients):
                 try:
                     return await getattr(client, name)(*args, **kwargs)
                 except Exception as e:  # noqa: BLE001
                     last_err = e
-                    if any(m in str(e).lower() for m in _QUOTA_MARKERS):
-                        log.warning("Redis quota hit on client, failing over: %s", e)
+                    # If this is not the last client, try next client for quota, connection, timeout, or redis errors
+                    if idx + 1 < len(clients):
+                        log.warning("Redis call %s failed on client %d, failing over: %s", name, idx, e)
                         continue
+                    log.error("Redis call %s failed on all %d clients: %s", name, len(clients), e)
                     raise
             if last_err:
                 raise last_err

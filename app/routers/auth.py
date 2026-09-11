@@ -18,6 +18,9 @@ its own identity.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
+import time
 import urllib.parse
 import uuid
 
@@ -38,15 +41,46 @@ settings = get_settings()
 
 YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"]
 LOGIN_SCOPES = ["openid", "email", "profile"]
+STATE_COOKIE_LOGIN = "clipai_oauth_login"
+STATE_COOKIE_YT = "clipai_oauth_yt"
+
+
+def _state_secret() -> str:
+    return settings.jwt_signing_key or settings.worker_secret or "clipai_state_sig"
+
+
+def _sign_state(state: str, extra: str = "") -> str:
+    sig = hmac.new(_state_secret().encode(), f"{state}:{extra}".encode(), hashlib.sha256).hexdigest()
+    return f"{state}.{extra}.{sig}"
+
+
+def _verify_signed_state(raw: str) -> tuple[bool, str, str]:
+    """Returns (valid, state, extra)"""
+    if not raw or raw.count(".") < 2:
+        return False, "", ""
+    parts = raw.split(".", 2)
+    state, extra, sig = parts[0], parts[1], parts[2]
+    expected = hmac.new(_state_secret().encode(), f"{state}:{extra}".encode(), hashlib.sha256).hexdigest()
+    if hmac.compare_digest(expected, sig):
+        return True, state, extra
+    return False, "", ""
 
 
 @router.get("/google/login")
 async def start_google_login():
     """Sign-in-with-Google — issues our own session on success."""
+    if not settings.google_client_id:
+        log.error("Google OAuth client_id is not configured.")
+        return RedirectResponse("/?auth=error&detail=not_configured")
+
     state = str(uuid.uuid4())
     r = get_redis()
     if r:
-        await r.setex(f"oauth_state:login:{state}", 600, "1")
+        try:
+            await r.setex(f"oauth_state:login:{state}", 600, "1")
+        except Exception as e:
+            log.warning("Could not persist login oauth_state to Redis (using cookie fallback): %s", e)
+
     params = {
         "client_id": settings.google_client_id,
         "redirect_uri": f"{settings.api_base_url}/api/v1/auth/google/callback",
@@ -56,17 +90,44 @@ async def start_google_login():
         "prompt": "select_account",
         "state": state,
     }
-    return RedirectResponse("https://accounts.google.com/o/oauth2/auth?" + urllib.parse.urlencode(params))
+    resp = RedirectResponse("https://accounts.google.com/o/oauth2/auth?" + urllib.parse.urlencode(params))
+    # Set signed fallback state cookie in case Redis is unreachable/down
+    resp.set_cookie(
+        STATE_COOKIE_LOGIN,
+        _sign_state(state, "1"),
+        max_age=600,
+        httponly=True,
+        samesite="lax",
+        secure=settings.env == "production",
+    )
+    return resp
 
 
 @router.get("/google/callback")
 async def google_login_callback(request: Request, state: str = "", code: str = ""):
-    r = get_redis()
-    valid = await r.get(f"oauth_state:login:{state}") if r else None
-    if not code or not valid:
+    if not code or not state:
         return RedirectResponse("/?auth=error&detail=invalid_state")
+
+    # Verify state via Redis or fallback cookie
+    r = get_redis()
+    valid = False
     if r:
-        await r.delete(f"oauth_state:login:{state}")
+        try:
+            res = await r.get(f"oauth_state:login:{state}")
+            if res:
+                valid = True
+                await r.delete(f"oauth_state:login:{state}")
+        except Exception as e:
+            log.warning("Redis lookup for login oauth_state failed: %s", e)
+
+    if not valid:
+        cookie_val = request.cookies.get(STATE_COOKIE_LOGIN, "")
+        cookie_valid, cookie_state, _ = _verify_signed_state(cookie_val)
+        if cookie_valid and cookie_state == state:
+            valid = True
+
+    if not valid:
+        return RedirectResponse("/?auth=error&detail=invalid_state")
 
     async with httpx.AsyncClient(timeout=15) as client:
         token_res = await client.post("https://oauth2.googleapis.com/token", data={
@@ -106,6 +167,7 @@ async def google_login_callback(request: Request, state: str = "", code: str = "
     token = issue_session_token(user_id, email)
     resp = RedirectResponse("/?auth=success", status_code=302)
     resp.set_cookie(SESSION_COOKIE, token, max_age=SESSION_TTL_SEC, httponly=True, samesite="lax", secure=settings.env == "production")
+    resp.delete_cookie(STATE_COOKIE_LOGIN)
     if is_new:
         resp.delete_cookie("clipai_ref")
     return resp
@@ -127,10 +189,18 @@ async def logout(response: Response):
 # ── YouTube channel connect (separate from login) ──────────────────
 @router.get("/youtube/connect")
 async def connect_youtube(user_id: str = Depends(require_user)):
+    if not settings.google_client_id:
+        log.error("Google OAuth client_id is not configured for YouTube connect.")
+        return RedirectResponse("/?youtube=error&detail=not_configured")
+
     state = str(uuid.uuid4())
     r = get_redis()
     if r:
-        await r.setex(f"oauth_state:yt:{state}", 600, user_id)
+        try:
+            await r.setex(f"oauth_state:yt:{state}", 600, user_id)
+        except Exception as e:
+            log.warning("Could not persist YouTube oauth_state to Redis (using cookie fallback): %s", e)
+
     params = {
         "client_id": settings.google_client_id,
         "redirect_uri": f"{settings.api_base_url}/api/v1/auth/youtube/callback",
@@ -140,14 +210,40 @@ async def connect_youtube(user_id: str = Depends(require_user)):
         "prompt": "consent",
         "state": state,
     }
-    return RedirectResponse("https://accounts.google.com/o/oauth2/auth?" + urllib.parse.urlencode(params))
+    resp = RedirectResponse("https://accounts.google.com/o/oauth2/auth?" + urllib.parse.urlencode(params))
+    resp.set_cookie(
+        STATE_COOKIE_YT,
+        _sign_state(state, user_id),
+        max_age=600,
+        httponly=True,
+        samesite="lax",
+        secure=settings.env == "production",
+    )
+    return resp
 
 
 @router.get("/youtube/callback")
-async def youtube_connect_callback(state: str = "", code: str = ""):
+async def youtube_connect_callback(request: Request, state: str = "", code: str = ""):
+    if not code or not state:
+        return RedirectResponse("/?youtube=error&detail=invalid_state")
+
     r = get_redis()
-    user_id = await r.get(f"oauth_state:yt:{state}") if r else None
-    if not code or not user_id:
+    user_id = None
+    if r:
+        try:
+            user_id = await r.get(f"oauth_state:yt:{state}")
+            if user_id:
+                await r.delete(f"oauth_state:yt:{state}")
+        except Exception as e:
+            log.warning("Redis lookup for YouTube oauth_state failed: %s", e)
+
+    if not user_id:
+        cookie_val = request.cookies.get(STATE_COOKIE_YT, "")
+        cookie_valid, cookie_state, cookie_user_id = _verify_signed_state(cookie_val)
+        if cookie_valid and cookie_state == state:
+            user_id = cookie_user_id
+
+    if not user_id:
         return RedirectResponse("/?youtube=error&detail=invalid_state")
 
     async with httpx.AsyncClient(timeout=15) as client:
@@ -165,7 +261,9 @@ async def youtube_connect_callback(state: str = "", code: str = ""):
     if data.get("refresh_token"):
         update["youtube_refresh_token"] = data["refresh_token"]
     UserRepo.update(user_id, update)
-    return RedirectResponse("/?youtube=connected")
+    resp = RedirectResponse("/?youtube=connected")
+    resp.delete_cookie(STATE_COOKIE_YT)
+    return resp
 
 
 @router.get("/youtube/status")

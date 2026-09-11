@@ -631,6 +631,35 @@ function extractYtId(url) {
 
 // ─── DOM Initialization ───────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  // Handle auth / youtube redirect query parameters
+  const params = new URLSearchParams(window.location.search);
+  const authStatus = params.get('auth');
+  const ytStatus = params.get('youtube');
+  const detail = params.get('detail');
+
+  if (authStatus === 'error') {
+    const msg = detail === 'invalid_state' ? 'Login session expired or invalid. Please try again.'
+              : detail === 'unverified_email' ? 'Please verify your Google email address.'
+              : detail === 'not_configured' ? 'Google OAuth is not configured yet on this instance.'
+              : 'Google sign-in failed. Please try again.';
+    showToast(msg, 'error');
+    window.history.replaceState({}, document.title, window.location.pathname);
+  } else if (authStatus === 'success') {
+    showToast('Signed in successfully!', 'live');
+    window.history.replaceState({}, document.title, window.location.pathname);
+  }
+
+  if (ytStatus === 'error') {
+    const msg = detail === 'invalid_state' ? 'YouTube connection session expired. Please retry.'
+              : detail === 'not_configured' ? 'YouTube OAuth is not configured on this instance.'
+              : 'Failed to connect YouTube channel. Please try again.';
+    showToast(msg, 'error');
+    window.history.replaceState({}, document.title, window.location.pathname);
+  } else if (ytStatus === 'connected') {
+    showToast('YouTube channel connected successfully!', 'live');
+    window.history.replaceState({}, document.title, window.location.pathname);
+  }
+
   initStudio();
   checkAuthAndProfile();
 });
