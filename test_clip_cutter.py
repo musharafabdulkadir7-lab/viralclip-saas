@@ -1,4 +1,13 @@
-from clip_cutter import parse_time, format_ass_time, _esc
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(__file__))
+
+try:
+    from pipeline.clip_cutter import parse_time, format_ass_time, _esc
+except ImportError:
+    from clip_cutter import parse_time, format_ass_time, _esc
+
 
 
 def test_parse_time_hh_mm_ss():

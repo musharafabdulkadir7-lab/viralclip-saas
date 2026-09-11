@@ -1,4 +1,13 @@
-from video_finder import _iso8601_to_seconds, VideoCandidate, register_uploaded_file, VideoFinderError
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(__file__))
+
+try:
+    from pipeline.video_finder import _iso8601_to_seconds, VideoCandidate, register_uploaded_file, VideoFinderError
+except ImportError:
+    from video_finder import _iso8601_to_seconds, VideoCandidate, register_uploaded_file, VideoFinderError
+
 import pytest
 
 

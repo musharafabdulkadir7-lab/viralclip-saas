@@ -3564,7 +3564,16 @@ def test_build_transcript_block_respects_char_limit(tmp_path):
 # FILE: test_clip_cutter.py
 ################################################################################
 
-from clip_cutter import parse_time, format_ass_time, _esc
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(__file__))
+
+try:
+    from pipeline.clip_cutter import parse_time, format_ass_time, _esc
+except ImportError:
+    from clip_cutter import parse_time, format_ass_time, _esc
+
 
 
 def test_parse_time_hh_mm_ss():
@@ -3591,7 +3600,16 @@ def test_esc_escapes_special_chars():
 # FILE: test_clip_finder.py
 ################################################################################
 
-from clip_finder import parse_vtt, build_transcript_block, _fallback_segment, ClipSegment
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(__file__))
+
+try:
+    from pipeline.clip_finder import parse_vtt, build_transcript_block, _fallback_segment, ClipSegment
+except ImportError:
+    from clip_finder import parse_vtt, build_transcript_block, _fallback_segment, ClipSegment
+
 
 SAMPLE_VTT = """WEBVTT
 
@@ -3640,7 +3658,16 @@ def test_fallback_segment_shape():
 # FILE: test_video_finder.py
 ################################################################################
 
-from video_finder import _iso8601_to_seconds, VideoCandidate, register_uploaded_file, VideoFinderError
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(__file__))
+
+try:
+    from pipeline.video_finder import _iso8601_to_seconds, VideoCandidate, register_uploaded_file, VideoFinderError
+except ImportError:
+    from video_finder import _iso8601_to_seconds, VideoCandidate, register_uploaded_file, VideoFinderError
+
 import pytest
 
 

@@ -1,4 +1,13 @@
-from clip_finder import parse_vtt, build_transcript_block, _fallback_segment, ClipSegment
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(__file__))
+
+try:
+    from pipeline.clip_finder import parse_vtt, build_transcript_block, _fallback_segment, ClipSegment
+except ImportError:
+    from clip_finder import parse_vtt, build_transcript_block, _fallback_segment, ClipSegment
+
 
 SAMPLE_VTT = """WEBVTT
 
