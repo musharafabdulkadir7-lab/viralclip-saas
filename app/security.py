@@ -95,15 +95,22 @@ def sign_worker_token(user_id: str, purpose: str = "poll") -> str:
 
 
 def verify_worker_token(user_id: str, token: str, purpose: str = "poll") -> bool:
+    """NEW: checks both the current and previous WORKER_SECRET (if set),
+    so rotating the secret doesn't invalidate every worker mid-flight."""
     if not token or not user_id:
         return False
-    # accept current and previous window to avoid a hard edge at the boundary
-    for window in (int(time.time()) // WORKER_TOKEN_TTL_SEC, int(time.time()) // WORKER_TOKEN_TTL_SEC - 1):
-        msg = f"{user_id}:{purpose}:{window}".encode()
-        expected = hmac.new(settings.worker_secret.encode(), msg, hashlib.sha256).hexdigest()
-        if hmac.compare_digest(expected, token):
-            return True
+    secrets = [s for s in (settings.worker_secret, settings.worker_secret_previous) if s]
+    if not secrets:
+        return False
+    now_window = int(time.time()) // WORKER_TOKEN_TTL_SEC
+    for secret in secrets:
+        for window in (now_window, now_window - 1):
+            msg = f"{user_id}:{purpose}:{window}".encode()
+            expected = hmac.new(secret.encode(), msg, hashlib.sha256).hexdigest()
+            if hmac.compare_digest(expected, token):
+                return True
     return False
+
 
 
 def verify_admin(request: Request) -> None:

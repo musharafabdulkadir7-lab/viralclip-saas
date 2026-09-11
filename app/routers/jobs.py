@@ -47,8 +47,10 @@ async def generate_clip(payload: ClipRequest, user_id: str = Depends(require_use
         "layout": payload.layout,
         "subtitle_style": payload.subtitle_style,
         "num_clips": payload.num_clips,
+        "rights_confirmed": payload.rights_confirmed,  # NEW — audit trail
     })
     remaining = max(0, settings.free_tier_limit - (used + 1)) if user.get("license") == "free_tier" else None
+
     return {"status": "success", "job_id": job_id, "free_remaining": remaining}
 
 

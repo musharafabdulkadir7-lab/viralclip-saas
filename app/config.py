@@ -31,15 +31,15 @@ class Settings(BaseSettings):
     # ── Paths ──
     home_dir: Path = Path.home() / ".clipai"
 
-    # ── Secrets (NO fallback defaults — see module docstring) ──
-    # Rotation for ADMIN_SECRET: set the new value in ADMIN_SECRET, move the old value
-    # into ADMIN_SECRET_PREVIOUS, deploy, then clear ADMIN_SECRET_PREVIOUS once callers update.
+    # ── Secrets (NO fallback defaults) ──
     youtube_api_key: str = ""
     worker_secret: str = Field(default="", min_length=0)
+    worker_secret_previous: str = ""  # NEW: rotation support, same pattern as admin_secret
     admin_secret: str = ""
     admin_secret_previous: str = ""
     keepalive_secret: str = ""
     api_base_url: str = "http://localhost:8000"
+
 
 
     google_client_id: str = ""
@@ -70,7 +70,11 @@ class Settings(BaseSettings):
     max_age_days: int = 730
     top_n_candidates: int = 3
 
+    # NEW: legal/trust posture for the CC-sourcing mode
+    require_rights_confirmation: bool = True
+
     # ── Rendering ──
+
     max_short_duration_sec: int = 56
     default_watermark: str = "@YourChannel"
     ffmpeg_timeout_sec: int = 600

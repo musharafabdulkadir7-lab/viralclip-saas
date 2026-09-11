@@ -303,8 +303,15 @@ async function startGeneration() {
       showToast('Please enter a topic or niche hint', 'error');
       return;
     }
+    const rightsCheck = document.getElementById('rights-confirm-check');
+    if (rightsCheck && !rightsCheck.checked) {
+      showToast('Please confirm attribution acknowledgment to proceed', 'error');
+      return;
+    }
     payload.niche = niche;
+    payload.rights_confirmed = Boolean(rightsCheck ? rightsCheck.checked : true);
   }
+
 
   runBtn.disabled = true;
   runBtn.textContent = 'Queuing…';

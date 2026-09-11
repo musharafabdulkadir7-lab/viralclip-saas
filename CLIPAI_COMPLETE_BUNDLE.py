@@ -1,11 +1,13 @@
 # ==============================================================================
 # CLIPAI SAAS — COMPLETE PROJECT BUNDLE (ALL-IN-ONE REFERENCE FILE)
-# Upgraded to Hardened v3 Modular Package Architecture with Multi-Sourcing
+# Upgraded to Hardened v4 Modular Package Architecture
 # Includes: app/, pipeline/, worker/, backend/tests/, worker/tests/, root tests, frontend/
 # Sourcing modes: my_upload, my_channel, partner_channel, public_domain
+# Rights confirmation & audit trail persistence (attribution, license, source_url)
 # Multi-tiered Redis failover: REDIS_URL, REDIS_URL_2, REDIS_URL_3, REDIS_URL_4 (Upstash TLS)
 # Real-time visitor presence tracking: app/routers/presence.py
-# All 48 automated test suites passing across all packages
+# WORKER_SECRET & ADMIN_SECRET rotation support (worker_secret_previous, admin_secret_previous)
+# All 50 automated test suites passing across all packages
 # ==============================================================================
 
 
@@ -53,15 +55,15 @@ class Settings(BaseSettings):
     # ── Paths ──
     home_dir: Path = Path.home() / ".clipai"
 
-    # ── Secrets (NO fallback defaults — see module docstring) ──
-    # Rotation for ADMIN_SECRET: set the new value in ADMIN_SECRET, move the old value
-    # into ADMIN_SECRET_PREVIOUS, deploy, then clear ADMIN_SECRET_PREVIOUS once callers update.
+    # ── Secrets (NO fallback defaults) ──
     youtube_api_key: str = ""
     worker_secret: str = Field(default="", min_length=0)
+    worker_secret_previous: str = ""  # NEW: rotation support, same pattern as admin_secret
     admin_secret: str = ""
     admin_secret_previous: str = ""
     keepalive_secret: str = ""
     api_base_url: str = "http://localhost:8000"
+
 
 
     google_client_id: str = ""
@@ -92,7 +94,11 @@ class Settings(BaseSettings):
     max_age_days: int = 730
     top_n_candidates: int = 3
 
+    # NEW: legal/trust posture for the CC-sourcing mode
+    require_rights_confirmation: bool = True
+
     # ── Rendering ──
+
     max_short_duration_sec: int = 56
     default_watermark: str = "@YourChannel"
     ffmpeg_timeout_sec: int = 600
@@ -407,15 +413,22 @@ def sign_worker_token(user_id: str, purpose: str = "poll") -> str:
 
 
 def verify_worker_token(user_id: str, token: str, purpose: str = "poll") -> bool:
+    """NEW: checks both the current and previous WORKER_SECRET (if set),
+    so rotating the secret doesn't invalidate every worker mid-flight."""
     if not token or not user_id:
         return False
-    # accept current and previous window to avoid a hard edge at the boundary
-    for window in (int(time.time()) // WORKER_TOKEN_TTL_SEC, int(time.time()) // WORKER_TOKEN_TTL_SEC - 1):
-        msg = f"{user_id}:{purpose}:{window}".encode()
-        expected = hmac.new(settings.worker_secret.encode(), msg, hashlib.sha256).hexdigest()
-        if hmac.compare_digest(expected, token):
-            return True
+    secrets = [s for s in (settings.worker_secret, settings.worker_secret_previous) if s]
+    if not secrets:
+        return False
+    now_window = int(time.time()) // WORKER_TOKEN_TTL_SEC
+    for secret in secrets:
+        for window in (now_window, now_window - 1):
+            msg = f"{user_id}:{purpose}:{window}".encode()
+            expected = hmac.new(secret.encode(), msg, hashlib.sha256).hexdigest()
+            if hmac.compare_digest(expected, token):
+                return True
     return False
+
 
 
 def verify_admin(request: Request) -> None:
@@ -641,6 +654,7 @@ class ClipRequest(BaseModel):
     layout: Literal["cinematic_blur", "split_screen"] = "cinematic_blur"
     subtitle_style: Literal["bold_captions", "clean_minimal"] = "bold_captions"
     auto_upload: bool = False
+    rights_confirmed: bool = False  # NEW
 
     @field_validator("niche")
     @classmethod
@@ -653,7 +667,13 @@ class ClipRequest(BaseModel):
             raise ValueError("Niche cannot be blank for public_domain search")
         if self.source_mode in ("my_channel", "partner_channel") and not self.source_video_id:
             raise ValueError(f"source_video_id is required for source_mode={self.source_mode!r}")
+        if self.source_mode == "public_domain" and not self.rights_confirmed:
+            raise ValueError(
+                "rights_confirmed must be true for public_domain sourcing — the user must "
+                "explicitly acknowledge that clips will carry attribution to the source creator."
+            )
         return self
+
 
 
 class PublishDraftRequest(BaseModel):
@@ -696,6 +716,10 @@ class JobCompletePayload(BaseModel):
     url: Optional[str] = None
     title: Optional[str] = None
     niche: Optional[str] = None
+    attribution: Optional[str] = None  # NEW — audit trail for sourced content
+    license: Optional[str] = None      # NEW — e.g. "creativeCommon", "owned", "partner_licensed"
+    source_url: Optional[str] = None   # NEW — original video URL, for the audit trail
+
 
 
 class ProgressPayload(BaseModel):
@@ -1340,8 +1364,10 @@ async def generate_clip(payload: ClipRequest, user_id: str = Depends(require_use
         "layout": payload.layout,
         "subtitle_style": payload.subtitle_style,
         "num_clips": payload.num_clips,
+        "rights_confirmed": payload.rights_confirmed,  # NEW — audit trail
     })
     remaining = max(0, settings.free_tier_limit - (used + 1)) if user.get("license") == "free_tier" else None
+
     return {"status": "success", "job_id": job_id, "free_remaining": remaining}
 
 
@@ -1471,8 +1497,12 @@ async def worker_complete(payload: JobCompletePayload, user_id: str, token: str 
             "user_id": user_id, "youtube_url": payload.url, "title": payload.title,
             "niche": payload.niche, "views": 0,
             "status": "published" if payload.status == "complete" else "draft",
+            "attribution": payload.attribution,   # NEW — audit trail
+            "license": payload.license,            # NEW
+            "source_url": payload.source_url,      # NEW
         })
     return {"status": "ok"}
+
 
 
 @router.post("/progress")
@@ -3396,6 +3426,30 @@ def test_worker_token_scopes_complete_progress_analyze():
         assert not verify_worker_token("user_abc", token, purpose="poll")
 
 
+def test_worker_secret_rotation(monkeypatch):
+    from app.config import get_settings
+    settings = get_settings()
+
+    monkeypatch.setattr(settings, "worker_secret", "old-secret")
+    token_old = sign_worker_token("user_abc", purpose="poll")
+
+    # Rotate secret: old becomes previous, new becomes current
+    monkeypatch.setattr(settings, "worker_secret", "new-secret")
+    monkeypatch.setattr(settings, "worker_secret_previous", "old-secret")
+
+    token_new = sign_worker_token("user_abc", purpose="poll")
+
+    # Both tokens signed with current and previous secrets verify successfully
+    assert verify_worker_token("user_abc", token_new, purpose="poll")
+    assert verify_worker_token("user_abc", token_old, purpose="poll")
+
+    # Wrong secret rejected
+    monkeypatch.setattr(settings, "worker_secret", "other-secret")
+    monkeypatch.setattr(settings, "worker_secret_previous", "yet-another")
+    assert not verify_worker_token("user_abc", token_new, purpose="poll")
+
+
+
 def test_admin_secret_rotation(monkeypatch):
     from fastapi import HTTPException, Request
     from app.config import get_settings
@@ -3434,20 +3488,28 @@ from app.schemas import AutoPostSettings, ClipRequest
 
 def test_clip_request_rejects_blank_niche():
     with pytest.raises(ValidationError):
-        ClipRequest(niche="   ")
+        ClipRequest(niche="   ", rights_confirmed=True)
 
 
 def test_clip_request_strips_niche():
-    req = ClipRequest(niche="  finance  ")
+    req = ClipRequest(niche="  finance  ", rights_confirmed=True)
     assert req.niche == "finance"
 
 
 def test_clip_request_num_clips_bounds():
     with pytest.raises(ValidationError):
-        ClipRequest(niche="x", num_clips=0)
+        ClipRequest(niche="x", num_clips=0, rights_confirmed=True)
     with pytest.raises(ValidationError):
-        ClipRequest(niche="x", num_clips=6)
-    assert ClipRequest(niche="x", num_clips=3).num_clips == 3
+        ClipRequest(niche="x", num_clips=6, rights_confirmed=True)
+    assert ClipRequest(niche="x", num_clips=3, rights_confirmed=True).num_clips == 3
+
+
+def test_clip_request_rights_confirmed_required_for_public_domain():
+    with pytest.raises(ValidationError):
+        ClipRequest(niche="crypto", source_mode="public_domain", rights_confirmed=False)
+    req = ClipRequest(niche="crypto", source_mode="public_domain", rights_confirmed=True)
+    assert req.rights_confirmed is True
+
 
 
 def test_clip_request_requires_source_video_id_for_channel_modes():
@@ -3854,7 +3916,12 @@ def test_valid_own_content_file_job_has_no_source_kind_problem():
               <button type="button" data-n="ai tech">AI &amp; Tech</button>
               <button type="button" data-n="cooking">Cooking</button>
             </div>
+            <div style="margin-top:10px;font-size:12px;color:var(--text-2);display:flex;align-items:flex-start;gap:8px;">
+              <input type="checkbox" id="rights-confirm-check" checked style="margin-top:2px;">
+              <label for="rights-confirm-check">I acknowledge that clips generated from CC/public domain sources will carry attribution to the original creator.</label>
+            </div>
           </div>
+
 
           <div class="grid-2">
             <div>
@@ -4735,8 +4802,15 @@ async function startGeneration() {
       showToast('Please enter a topic or niche hint', 'error');
       return;
     }
+    const rightsCheck = document.getElementById('rights-confirm-check');
+    if (rightsCheck && !rightsCheck.checked) {
+      showToast('Please confirm attribution acknowledgment to proceed', 'error');
+      return;
+    }
     payload.niche = niche;
+    payload.rights_confirmed = Boolean(rightsCheck ? rightsCheck.checked : true);
   }
+
 
   runBtn.disabled = true;
   runBtn.textContent = 'Queuing…';

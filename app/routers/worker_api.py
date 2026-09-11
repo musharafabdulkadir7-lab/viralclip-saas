@@ -47,8 +47,12 @@ async def worker_complete(payload: JobCompletePayload, user_id: str, token: str 
             "user_id": user_id, "youtube_url": payload.url, "title": payload.title,
             "niche": payload.niche, "views": 0,
             "status": "published" if payload.status == "complete" else "draft",
+            "attribution": payload.attribution,   # NEW — audit trail
+            "license": payload.license,            # NEW
+            "source_url": payload.source_url,      # NEW
         })
     return {"status": "ok"}
+
 
 
 @router.post("/progress")

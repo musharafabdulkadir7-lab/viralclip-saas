@@ -14,6 +14,7 @@ class ClipRequest(BaseModel):
     layout: Literal["cinematic_blur", "split_screen"] = "cinematic_blur"
     subtitle_style: Literal["bold_captions", "clean_minimal"] = "bold_captions"
     auto_upload: bool = False
+    rights_confirmed: bool = False  # NEW
 
     @field_validator("niche")
     @classmethod
@@ -26,7 +27,13 @@ class ClipRequest(BaseModel):
             raise ValueError("Niche cannot be blank for public_domain search")
         if self.source_mode in ("my_channel", "partner_channel") and not self.source_video_id:
             raise ValueError(f"source_video_id is required for source_mode={self.source_mode!r}")
+        if self.source_mode == "public_domain" and not self.rights_confirmed:
+            raise ValueError(
+                "rights_confirmed must be true for public_domain sourcing — the user must "
+                "explicitly acknowledge that clips will carry attribution to the source creator."
+            )
         return self
+
 
 
 class PublishDraftRequest(BaseModel):
@@ -69,6 +76,10 @@ class JobCompletePayload(BaseModel):
     url: Optional[str] = None
     title: Optional[str] = None
     niche: Optional[str] = None
+    attribution: Optional[str] = None  # NEW — audit trail for sourced content
+    license: Optional[str] = None      # NEW — e.g. "creativeCommon", "owned", "partner_licensed"
+    source_url: Optional[str] = None   # NEW — original video URL, for the audit trail
+
 
 
 class ProgressPayload(BaseModel):

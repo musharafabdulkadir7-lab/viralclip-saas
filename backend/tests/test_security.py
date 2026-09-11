@@ -58,6 +58,30 @@ def test_worker_token_scopes_complete_progress_analyze():
         assert not verify_worker_token("user_abc", token, purpose="poll")
 
 
+def test_worker_secret_rotation(monkeypatch):
+    from app.config import get_settings
+    settings = get_settings()
+
+    monkeypatch.setattr(settings, "worker_secret", "old-secret")
+    token_old = sign_worker_token("user_abc", purpose="poll")
+
+    # Rotate secret: old becomes previous, new becomes current
+    monkeypatch.setattr(settings, "worker_secret", "new-secret")
+    monkeypatch.setattr(settings, "worker_secret_previous", "old-secret")
+
+    token_new = sign_worker_token("user_abc", purpose="poll")
+
+    # Both tokens signed with current and previous secrets verify successfully
+    assert verify_worker_token("user_abc", token_new, purpose="poll")
+    assert verify_worker_token("user_abc", token_old, purpose="poll")
+
+    # Wrong secret rejected
+    monkeypatch.setattr(settings, "worker_secret", "other-secret")
+    monkeypatch.setattr(settings, "worker_secret_previous", "yet-another")
+    assert not verify_worker_token("user_abc", token_new, purpose="poll")
+
+
+
 def test_admin_secret_rotation(monkeypatch):
     from fastapi import HTTPException, Request
     from app.config import get_settings

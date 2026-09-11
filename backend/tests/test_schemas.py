@@ -11,20 +11,28 @@ from app.schemas import AutoPostSettings, ClipRequest
 
 def test_clip_request_rejects_blank_niche():
     with pytest.raises(ValidationError):
-        ClipRequest(niche="   ")
+        ClipRequest(niche="   ", rights_confirmed=True)
 
 
 def test_clip_request_strips_niche():
-    req = ClipRequest(niche="  finance  ")
+    req = ClipRequest(niche="  finance  ", rights_confirmed=True)
     assert req.niche == "finance"
 
 
 def test_clip_request_num_clips_bounds():
     with pytest.raises(ValidationError):
-        ClipRequest(niche="x", num_clips=0)
+        ClipRequest(niche="x", num_clips=0, rights_confirmed=True)
     with pytest.raises(ValidationError):
-        ClipRequest(niche="x", num_clips=6)
-    assert ClipRequest(niche="x", num_clips=3).num_clips == 3
+        ClipRequest(niche="x", num_clips=6, rights_confirmed=True)
+    assert ClipRequest(niche="x", num_clips=3, rights_confirmed=True).num_clips == 3
+
+
+def test_clip_request_rights_confirmed_required_for_public_domain():
+    with pytest.raises(ValidationError):
+        ClipRequest(niche="crypto", source_mode="public_domain", rights_confirmed=False)
+    req = ClipRequest(niche="crypto", source_mode="public_domain", rights_confirmed=True)
+    assert req.rights_confirmed is True
+
 
 
 def test_clip_request_requires_source_video_id_for_channel_modes():
