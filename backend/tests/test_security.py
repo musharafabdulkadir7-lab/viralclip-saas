@@ -12,7 +12,9 @@ from app.security import (  # noqa: E402
     verify_session_token,
     verify_worker_token,
     sign_worker_token,
+    verify_admin,
 )
+
 
 
 def test_session_token_roundtrip():
@@ -54,3 +56,25 @@ def test_worker_token_scopes_complete_progress_analyze():
         token = sign_worker_token("user_abc", purpose=purpose)
         assert verify_worker_token("user_abc", token, purpose=purpose)
         assert not verify_worker_token("user_abc", token, purpose="poll")
+
+
+def test_admin_secret_rotation(monkeypatch):
+    from fastapi import HTTPException, Request
+    from app.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "admin_secret", "new-secret")
+    monkeypatch.setattr(settings, "admin_secret_previous", "old-secret")
+
+    req_new = Request({"type": "http", "headers": [(b"x-admin-secret", b"new-secret")]})
+    req_old = Request({"type": "http", "headers": [(b"x-admin-secret", b"old-secret")]})
+    req_bad = Request({"type": "http", "headers": [(b"x-admin-secret", b"bad-secret")]})
+
+    # Both new and previous secrets succeed
+    verify_admin(req_new)
+    verify_admin(req_old)
+
+    import pytest
+    with pytest.raises(HTTPException) as exc:
+        verify_admin(req_bad)
+    assert exc.value.status_code == 403

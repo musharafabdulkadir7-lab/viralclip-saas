@@ -3,7 +3,7 @@
 # Upgraded to Hardened v3 Modular Package Architecture with Multi-Sourcing
 # Includes: app/, pipeline/, worker/, backend/tests/, worker/tests/, frontend/
 # Sourcing modes: my_upload, my_channel, partner_channel, public_domain
-# Multi-tiered Redis failover: REDIS_URL, REDIS_URL_2, REDIS_URL_3 (Upstash TLS)
+# Multi-tiered Redis failover: REDIS_URL, REDIS_URL_2, REDIS_URL_3, REDIS_URL_4 (Upstash TLS)
 # Real-time visitor presence tracking: app/routers/presence.py
 # ==============================================================================
 
@@ -53,11 +53,15 @@ class Settings(BaseSettings):
     home_dir: Path = Path.home() / ".clipai"
 
     # ── Secrets (NO fallback defaults — see module docstring) ──
+    # Rotation for ADMIN_SECRET: set the new value in ADMIN_SECRET, move the old value
+    # into ADMIN_SECRET_PREVIOUS, deploy, then clear ADMIN_SECRET_PREVIOUS once callers update.
     youtube_api_key: str = ""
     worker_secret: str = Field(default="", min_length=0)
     admin_secret: str = ""
+    admin_secret_previous: str = ""
     keepalive_secret: str = ""
     api_base_url: str = "http://localhost:8000"
+
 
     google_client_id: str = ""
     google_client_secret: str = ""
@@ -72,6 +76,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     redis_url_2: str = ""
     redis_url_3: str = ""
+    redis_url_4: str = ""
+
 
     jwt_signing_key: str = ""  # replaces the old HMAC-with-worker-secret user-token scheme
 
@@ -245,13 +251,14 @@ _QUOTA_MARKERS = ("max monthly", "quota", "limit exceeded", "maxmemory")
 
 
 class FailoverRedis:
-    def __init__(self, primary_url: str, secondary_url: str = "", tertiary_url: str = ""):
+    def __init__(self, primary_url: str, secondary_url: str = "", tertiary_url: str = "", quaternary_url: str = ""):
         self.primary = aioredis.from_url(primary_url, decode_responses=True) if primary_url else None
         self.secondary = aioredis.from_url(secondary_url, decode_responses=True) if secondary_url else None
         self.tertiary = aioredis.from_url(tertiary_url, decode_responses=True) if tertiary_url else None
+        self.quaternary = aioredis.from_url(quaternary_url, decode_responses=True) if quaternary_url else None
 
     async def _clients(self):
-        return [c for c in (self.primary, self.secondary, self.tertiary) if c is not None]
+        return [c for c in (self.primary, self.secondary, self.tertiary, self.quaternary) if c is not None]
 
     def __getattr__(self, name):
         async def _call(*args, **kwargs):
@@ -280,7 +287,8 @@ class FailoverRedis:
 def _client() -> Optional[FailoverRedis]:
     if not settings.redis_url:
         return None
-    return FailoverRedis(settings.redis_url, settings.redis_url_2, settings.redis_url_3)
+    return FailoverRedis(settings.redis_url, settings.redis_url_2, settings.redis_url_3, settings.redis_url_4)
+
 
 
 def get_redis() -> Optional[FailoverRedis]:
@@ -411,8 +419,10 @@ def verify_worker_token(user_id: str, token: str, purpose: str = "poll") -> bool
 
 def verify_admin(request: Request) -> None:
     auth = request.headers.get("X-Admin-Secret", "")
-    if not settings.admin_secret or not hmac.compare_digest(auth, settings.admin_secret):
+    candidates = [s for s in (settings.admin_secret, settings.admin_secret_previous) if s]
+    if not candidates or not any(hmac.compare_digest(auth, c) for c in candidates):
         raise HTTPException(status_code=403, detail="Forbidden")
+
 
 
 # ── Distributed rate limiting (Redis sorted-set sliding window) ────
@@ -773,6 +783,17 @@ async def ensure_group() -> None:
             log.warning("xgroup_create warning: %s", e)
 
 
+async def set_owner(job_id: str, user_id: str) -> None:
+    r = get_redis()
+    if r is not None:
+        await r.set(f"job_owner:{job_id}", user_id, ex=86400)
+
+
+async def get_owner(job_id: str) -> str | None:
+    r = get_redis()
+    return await r.get(f"job_owner:{job_id}") if r is not None else None
+
+
 async def enqueue(payload: dict[str, Any]) -> str:
     r = get_redis()
     job_id = payload.get("job_id") or str(uuid.uuid4())
@@ -781,7 +802,9 @@ async def enqueue(payload: dict[str, Any]) -> str:
         await ensure_group()
         await r.xadd(STREAM, {"data": json.dumps(payload)})
         await set_status(job_id, "queued", 0, "Job queued for processing...")
+        await set_owner(job_id, payload.get("user_id", ""))
     return job_id
+
 
 
 async def claim_next(consumer_name: str) -> Optional[QueuedJob]:
@@ -815,13 +838,14 @@ async def _reclaim_one(consumer_name: str) -> Optional[QueuedJob]:
         _, fields = claimed[0]
         data = json.loads(fields["data"])
         attempts = int(entry.get("times_delivered", 1))
-        if attempts > MAX_ATTEMPTS:
+        if attempts >= MAX_ATTEMPTS:
             await _dead_letter(stream_id, data, reason="max attempts exceeded")
             await r.xack(STREAM, GROUP, stream_id)
             continue
         log.warning("Reclaimed stale job %s (attempt %d)", data.get("job_id"), attempts)
         return QueuedJob(job_id=data["job_id"], payload=data, stream_id=stream_id, attempts=attempts)
     return None
+
 
 
 async def _dead_letter(stream_id: str, payload: dict, reason: str) -> None:
@@ -1011,28 +1035,35 @@ settings = get_settings()
 _scheduler = AsyncIOScheduler()
 
 
+AUTOPOST_ENABLED_SET = "autopost:enabled"
+
+
 async def _trigger_autopost_jobs() -> None:
     r = get_redis()
     if r is None:
         return
     now = datetime.utcnow()
-    current_day = now.strftime("%a")
-    current_time = now.strftime("%H:%M")
+    current_day, current_time = now.strftime("%a"), now.strftime("%H:%M")
     try:
-        async for key in r.primary.scan_iter("user:*:autopost"):  # type: ignore[union-attr]
-            user_id = key.split(":")[1]
-            data = await r.hgetall(key)
+        user_ids = await r.smembers(AUTOPOST_ENABLED_SET)
+        for user_id in user_ids:
+            data = await r.hgetall(f"user:{user_id}:autopost")
             if data.get("enabled") != "True":
+                await r.srem(AUTOPOST_ENABLED_SET, user_id)  # index drift, self-heal
                 continue
             days = json.loads(data.get("days", "[]"))
             times = json.loads(data.get("times", "[]"))
             if current_day not in days or current_time not in times:
                 continue
             niche = data.get("niche", "motivation")
-            await job_queue.enqueue({"mode": "licensed_cc", "niche": niche, "user_id": user_id, "is_auto_post": True, "auto_upload": True})
+            await job_queue.enqueue({
+                "mode": "licensed_cc", "niche": niche, "user_id": user_id,
+                "is_auto_post": True, "auto_upload": True,
+            })
             log.info("Auto-post job queued for user %s (niche=%r)", user_id, niche)
     except Exception as e:
-        log.error("Autopost scan failed: %s", e)
+        log.error("Autopost trigger failed: %s", e)
+
 
 
 async def _reap_stale_jobs() -> None:
@@ -1336,11 +1367,11 @@ async def list_partner_channels():
 
 @router.get("/job-status/{job_id}")
 async def get_job_status(job_id: str, user_id: str = Depends(require_user)):
-    # NOTE: job_id is a random uuid so this doesn't leak other users' jobs by
-    # guessing, but a stricter deployment would also store job->user_id and
-    # check ownership here. Left as a documented follow-up rather than
-    # silently assumed-safe.
+    owner = await job_queue.get_owner(job_id)
+    if owner is not None and owner != user_id:
+        raise HTTPException(status_code=404, detail="Job not found")
     return await job_queue.get_status(job_id)
+
 
 
 @router.get("/workplace/clips")
@@ -1392,14 +1423,15 @@ def _is_live_youtube_url(url: str) -> bool:
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..config import get_settings
 from ..db import ClipRepo, UserRepo
 from ..logging_conf import get_logger
 from ..schemas import AnalyzeRequest, JobCompletePayload, ProgressPayload
-from ..security import verify_worker_token
+from ..security import verify_admin, verify_worker_token
 from ..services import job_queue
+
 
 router = APIRouter(prefix="/api/v1/worker", tags=["worker"])
 log = get_logger("worker_api")
@@ -1476,17 +1508,14 @@ async def analyze_transcript(payload: AnalyzeRequest, user_id: str, token: str =
 
 
 @router.get("/scripts")
-async def get_worker_scripts(user_id: str, token: str = ""):
-    _auth(user_id, token, purpose="scripts")
+async def get_worker_scripts(_=Depends(verify_admin)):
+    if settings.env == "production":
+        raise HTTPException(status_code=404)
     import pathlib
-    base = pathlib.Path(__file__).resolve().parents[3] / "worker" / "pipeline"
-    scripts = {}
-    for p in base.glob("*.py"):
-        try:
-            scripts[p.name] = p.read_text(encoding="utf-8")
-        except Exception:
-            pass
-    return {"scripts": scripts}
+    base = pathlib.Path(__file__).resolve().parents[2] / "worker"
+    pipeline_dir = base / "pipeline" if (base / "pipeline").exists() else pathlib.Path(__file__).resolve().parents[2] / "pipeline"
+    return {"scripts": {p.name: p.read_text(encoding="utf-8") for p in pipeline_dir.glob("*.py")}}
+
 
 
 @router.get("/heartbeat")
@@ -1701,7 +1730,12 @@ async def save_auto_post_settings(payload: AutoPostSettings, user_id: str = Depe
             "niche": payload.niche,
             "days": json.dumps(payload.days),
         })
+        if payload.enabled:
+            await r.sadd("autopost:enabled", user_id)
+        else:
+            await r.srem("autopost:enabled", user_id)
     return {"status": "success"}
+
 
 
 @router.post("/admin/generate-invite")
@@ -1864,8 +1898,9 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-@dataclass(frozen=True)
+@dataclass
 class WorkerSettings:
+
     home_dir: Path = field(default_factory=lambda: Path.home() / ".clipai")
     youtube_api_key: str = field(default_factory=lambda: os.environ.get("YOUTUBE_API_KEY", ""))
     worker_secret: str = field(default_factory=lambda: os.environ.get("WORKER_SECRET", ""))
@@ -3211,6 +3246,92 @@ if __name__ == "__main__":
     run_worker_loop()
 
 ################################################################################
+# FILE: backend/tests/conftest.py
+################################################################################
+
+import pytest
+import fakeredis.aioredis
+
+
+@pytest.fixture
+def fake_redis():
+    return fakeredis.aioredis.FakeRedis(decode_responses=True)
+
+
+################################################################################
+# FILE: backend/tests/test_job_queue.py
+################################################################################
+
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+os.environ.setdefault('WORKER_SECRET', 'test-secret')
+
+import pytest
+from app.services import job_queue
+
+
+@pytest.mark.asyncio
+async def test_enqueue_claim_ack_roundtrip(fake_redis, monkeypatch):
+    monkeypatch.setattr(job_queue, 'get_redis', lambda: fake_redis)
+    job_id = await job_queue.enqueue({'user_id': 'u1', 'niche': 'finance'})
+    job = await job_queue.claim_next('consumer-1')
+    assert job is not None and job.job_id == job_id
+    await job_queue.set_status(job.job_id, 'processing', 5, 'Processing...')
+    await job_queue.ack(job)
+    status = await job_queue.get_status(job_id)
+    assert status['status'] == 'processing'
+
+
+@pytest.mark.asyncio
+async def test_reclaim_after_max_attempts_dead_letters(fake_redis, monkeypatch):
+    monkeypatch.setattr(job_queue, 'get_redis', lambda: fake_redis)
+    monkeypatch.setattr(job_queue, 'CLAIM_IDLE_MS', 0)  # force-eligible immediately
+    job_id = await job_queue.enqueue({'user_id': 'u1', 'niche': 'gaming'})
+    for i in range(job_queue.MAX_ATTEMPTS + 1):
+        await job_queue.claim_next(f'consumer-{i}')  # never acked, stays pending
+    dead_len = await fake_redis.xlen(job_queue.DEAD_LETTER)
+    assert dead_len == 1
+
+
+@pytest.mark.asyncio
+async def test_job_owner_roundtrip(fake_redis, monkeypatch):
+    monkeypatch.setattr(job_queue, 'get_redis', lambda: fake_redis)
+    job_id = await job_queue.enqueue({'user_id': 'u42', 'niche': 'cooking'})
+    assert await job_queue.get_owner(job_id) == 'u42'
+
+
+################################################################################
+# FILE: backend/tests/test_orchestrator.py
+################################################################################
+
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+os.environ.setdefault('WORKER_SECRET', 'test-secret')
+
+from pipeline.orchestrator import ClipJob
+
+
+def test_split_screen_requires_broll():
+    job = ClipJob(mode='public_domain', user_id='u1', job_id='j1', niche='x', layout='split_screen')
+    assert any('broll_path' in p for p in job.validate())
+
+
+def test_num_clips_clamped_to_max(monkeypatch):
+    monkeypatch.setattr('pipeline.config.settings.max_clips_per_job', 5)
+    job = ClipJob.from_queue_payload({'user_id': 'u1', 'job_id': 'j1', 'num_clips': 99})
+    assert job.num_clips == 5
+
+
+def test_unknown_mode_rejected():
+    job = ClipJob(mode='not_a_real_mode', user_id='u1', job_id='j1')
+    assert any('Unknown mode' in p for p in job.validate())
+
+
+################################################################################
 # FILE: backend/tests/test_security.py
 ################################################################################
 
@@ -3228,7 +3349,9 @@ from app.security import (  # noqa: E402
     verify_session_token,
     verify_worker_token,
     sign_worker_token,
+    verify_admin,
 )
+
 
 
 def test_session_token_roundtrip():
@@ -3270,6 +3393,28 @@ def test_worker_token_scopes_complete_progress_analyze():
         token = sign_worker_token("user_abc", purpose=purpose)
         assert verify_worker_token("user_abc", token, purpose=purpose)
         assert not verify_worker_token("user_abc", token, purpose="poll")
+
+
+def test_admin_secret_rotation(monkeypatch):
+    from fastapi import HTTPException, Request
+    from app.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "admin_secret", "new-secret")
+    monkeypatch.setattr(settings, "admin_secret_previous", "old-secret")
+
+    req_new = Request({"type": "http", "headers": [(b"x-admin-secret", b"new-secret")]})
+    req_old = Request({"type": "http", "headers": [(b"x-admin-secret", b"old-secret")]})
+    req_bad = Request({"type": "http", "headers": [(b"x-admin-secret", b"bad-secret")]})
+
+    # Both new and previous secrets succeed
+    verify_admin(req_new)
+    verify_admin(req_old)
+
+    import pytest
+    with pytest.raises(HTTPException) as exc:
+        verify_admin(req_bad)
+    assert exc.value.status_code == 403
 
 ################################################################################
 # FILE: backend/tests/test_schemas.py

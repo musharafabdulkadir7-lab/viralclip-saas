@@ -32,11 +32,15 @@ class Settings(BaseSettings):
     home_dir: Path = Path.home() / ".clipai"
 
     # ── Secrets (NO fallback defaults — see module docstring) ──
+    # Rotation for ADMIN_SECRET: set the new value in ADMIN_SECRET, move the old value
+    # into ADMIN_SECRET_PREVIOUS, deploy, then clear ADMIN_SECRET_PREVIOUS once callers update.
     youtube_api_key: str = ""
     worker_secret: str = Field(default="", min_length=0)
     admin_secret: str = ""
+    admin_secret_previous: str = ""
     keepalive_secret: str = ""
     api_base_url: str = "http://localhost:8000"
+
 
     google_client_id: str = ""
     google_client_secret: str = ""
@@ -51,6 +55,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     redis_url_2: str = ""
     redis_url_3: str = ""
+    redis_url_4: str = ""
+
 
     jwt_signing_key: str = ""  # replaces the old HMAC-with-worker-secret user-token scheme
 

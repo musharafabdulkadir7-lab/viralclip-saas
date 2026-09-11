@@ -75,11 +75,11 @@ async def list_partner_channels():
 
 @router.get("/job-status/{job_id}")
 async def get_job_status(job_id: str, user_id: str = Depends(require_user)):
-    # NOTE: job_id is a random uuid so this doesn't leak other users' jobs by
-    # guessing, but a stricter deployment would also store job->user_id and
-    # check ownership here. Left as a documented follow-up rather than
-    # silently assumed-safe.
+    owner = await job_queue.get_owner(job_id)
+    if owner is not None and owner != user_id:
+        raise HTTPException(status_code=404, detail="Job not found")
     return await job_queue.get_status(job_id)
+
 
 
 @router.get("/workplace/clips")

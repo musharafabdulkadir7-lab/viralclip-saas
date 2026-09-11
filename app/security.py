@@ -108,8 +108,10 @@ def verify_worker_token(user_id: str, token: str, purpose: str = "poll") -> bool
 
 def verify_admin(request: Request) -> None:
     auth = request.headers.get("X-Admin-Secret", "")
-    if not settings.admin_secret or not hmac.compare_digest(auth, settings.admin_secret):
+    candidates = [s for s in (settings.admin_secret, settings.admin_secret_previous) if s]
+    if not candidates or not any(hmac.compare_digest(auth, c) for c in candidates):
         raise HTTPException(status_code=403, detail="Forbidden")
+
 
 
 # ── Distributed rate limiting (Redis sorted-set sliding window) ────

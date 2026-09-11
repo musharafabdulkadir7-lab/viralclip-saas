@@ -56,7 +56,12 @@ async def save_auto_post_settings(payload: AutoPostSettings, user_id: str = Depe
             "niche": payload.niche,
             "days": json.dumps(payload.days),
         })
+        if payload.enabled:
+            await r.sadd("autopost:enabled", user_id)
+        else:
+            await r.srem("autopost:enabled", user_id)
     return {"status": "success"}
+
 
 
 @router.post("/admin/generate-invite")

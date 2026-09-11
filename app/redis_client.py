@@ -24,13 +24,14 @@ _QUOTA_MARKERS = ("max monthly", "quota", "limit exceeded", "maxmemory")
 
 
 class FailoverRedis:
-    def __init__(self, primary_url: str, secondary_url: str = "", tertiary_url: str = ""):
+    def __init__(self, primary_url: str, secondary_url: str = "", tertiary_url: str = "", quaternary_url: str = ""):
         self.primary = aioredis.from_url(primary_url, decode_responses=True) if primary_url else None
         self.secondary = aioredis.from_url(secondary_url, decode_responses=True) if secondary_url else None
         self.tertiary = aioredis.from_url(tertiary_url, decode_responses=True) if tertiary_url else None
+        self.quaternary = aioredis.from_url(quaternary_url, decode_responses=True) if quaternary_url else None
 
     async def _clients(self):
-        return [c for c in (self.primary, self.secondary, self.tertiary) if c is not None]
+        return [c for c in (self.primary, self.secondary, self.tertiary, self.quaternary) if c is not None]
 
     def __getattr__(self, name):
         async def _call(*args, **kwargs):
@@ -59,7 +60,8 @@ class FailoverRedis:
 def _client() -> Optional[FailoverRedis]:
     if not settings.redis_url:
         return None
-    return FailoverRedis(settings.redis_url, settings.redis_url_2, settings.redis_url_3)
+    return FailoverRedis(settings.redis_url, settings.redis_url_2, settings.redis_url_3, settings.redis_url_4)
+
 
 
 def get_redis() -> Optional[FailoverRedis]:

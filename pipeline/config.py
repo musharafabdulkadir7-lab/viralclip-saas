@@ -19,8 +19,9 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-@dataclass(frozen=True)
+@dataclass
 class WorkerSettings:
+
     home_dir: Path = field(default_factory=lambda: Path.home() / ".clipai")
     youtube_api_key: str = field(default_factory=lambda: os.environ.get("YOUTUBE_API_KEY", ""))
     worker_secret: str = field(default_factory=lambda: os.environ.get("WORKER_SECRET", ""))

@@ -60,6 +60,17 @@ async def ensure_group() -> None:
             log.warning("xgroup_create warning: %s", e)
 
 
+async def set_owner(job_id: str, user_id: str) -> None:
+    r = get_redis()
+    if r is not None:
+        await r.set(f"job_owner:{job_id}", user_id, ex=86400)
+
+
+async def get_owner(job_id: str) -> str | None:
+    r = get_redis()
+    return await r.get(f"job_owner:{job_id}") if r is not None else None
+
+
 async def enqueue(payload: dict[str, Any]) -> str:
     r = get_redis()
     job_id = payload.get("job_id") or str(uuid.uuid4())
@@ -68,7 +79,9 @@ async def enqueue(payload: dict[str, Any]) -> str:
         await ensure_group()
         await r.xadd(STREAM, {"data": json.dumps(payload)})
         await set_status(job_id, "queued", 0, "Job queued for processing...")
+        await set_owner(job_id, payload.get("user_id", ""))
     return job_id
+
 
 
 async def claim_next(consumer_name: str) -> Optional[QueuedJob]:
@@ -102,13 +115,14 @@ async def _reclaim_one(consumer_name: str) -> Optional[QueuedJob]:
         _, fields = claimed[0]
         data = json.loads(fields["data"])
         attempts = int(entry.get("times_delivered", 1))
-        if attempts > MAX_ATTEMPTS:
+        if attempts >= MAX_ATTEMPTS:
             await _dead_letter(stream_id, data, reason="max attempts exceeded")
             await r.xack(STREAM, GROUP, stream_id)
             continue
         log.warning("Reclaimed stale job %s (attempt %d)", data.get("job_id"), attempts)
         return QueuedJob(job_id=data["job_id"], payload=data, stream_id=stream_id, attempts=attempts)
     return None
+
 
 
 async def _dead_letter(stream_id: str, payload: dict, reason: str) -> None:

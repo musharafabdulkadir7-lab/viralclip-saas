@@ -35,28 +35,35 @@ settings = get_settings()
 _scheduler = AsyncIOScheduler()
 
 
+AUTOPOST_ENABLED_SET = "autopost:enabled"
+
+
 async def _trigger_autopost_jobs() -> None:
     r = get_redis()
     if r is None:
         return
     now = datetime.utcnow()
-    current_day = now.strftime("%a")
-    current_time = now.strftime("%H:%M")
+    current_day, current_time = now.strftime("%a"), now.strftime("%H:%M")
     try:
-        async for key in r.primary.scan_iter("user:*:autopost"):  # type: ignore[union-attr]
-            user_id = key.split(":")[1]
-            data = await r.hgetall(key)
+        user_ids = await r.smembers(AUTOPOST_ENABLED_SET)
+        for user_id in user_ids:
+            data = await r.hgetall(f"user:{user_id}:autopost")
             if data.get("enabled") != "True":
+                await r.srem(AUTOPOST_ENABLED_SET, user_id)  # index drift, self-heal
                 continue
             days = json.loads(data.get("days", "[]"))
             times = json.loads(data.get("times", "[]"))
             if current_day not in days or current_time not in times:
                 continue
             niche = data.get("niche", "motivation")
-            await job_queue.enqueue({"mode": "licensed_cc", "niche": niche, "user_id": user_id, "is_auto_post": True, "auto_upload": True})
+            await job_queue.enqueue({
+                "mode": "licensed_cc", "niche": niche, "user_id": user_id,
+                "is_auto_post": True, "auto_upload": True,
+            })
             log.info("Auto-post job queued for user %s (niche=%r)", user_id, niche)
     except Exception as e:
-        log.error("Autopost scan failed: %s", e)
+        log.error("Autopost trigger failed: %s", e)
+
 
 
 async def _reap_stale_jobs() -> None:

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..config import get_settings
 from ..db import ClipRepo, UserRepo
 from ..logging_conf import get_logger
 from ..schemas import AnalyzeRequest, JobCompletePayload, ProgressPayload
-from ..security import verify_worker_token
+from ..security import verify_admin, verify_worker_token
 from ..services import job_queue
+
 
 router = APIRouter(prefix="/api/v1/worker", tags=["worker"])
 log = get_logger("worker_api")
@@ -84,17 +85,14 @@ async def analyze_transcript(payload: AnalyzeRequest, user_id: str, token: str =
 
 
 @router.get("/scripts")
-async def get_worker_scripts(user_id: str, token: str = ""):
-    _auth(user_id, token, purpose="scripts")
+async def get_worker_scripts(_=Depends(verify_admin)):
+    if settings.env == "production":
+        raise HTTPException(status_code=404)
     import pathlib
-    base = pathlib.Path(__file__).resolve().parents[3] / "worker" / "pipeline"
-    scripts = {}
-    for p in base.glob("*.py"):
-        try:
-            scripts[p.name] = p.read_text(encoding="utf-8")
-        except Exception:
-            pass
-    return {"scripts": scripts}
+    base = pathlib.Path(__file__).resolve().parents[2] / "worker"
+    pipeline_dir = base / "pipeline" if (base / "pipeline").exists() else pathlib.Path(__file__).resolve().parents[2] / "pipeline"
+    return {"scripts": {p.name: p.read_text(encoding="utf-8") for p in pipeline_dir.glob("*.py")}}
+
 
 
 @router.get("/heartbeat")
