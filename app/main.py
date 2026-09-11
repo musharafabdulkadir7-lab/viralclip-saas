@@ -81,7 +81,12 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health():
-        return {"status": "ok", "redis": await redis_ping()}
+        try:
+            r_ok = await redis_ping()
+        except Exception as e:
+            log.warning("Health check redis ping failed: %s", e)
+            r_ok = False
+        return {"status": "ok", "redis": bool(r_ok)}
 
     @app.get("/redeem/{token}")
     async def redeem_redirect(token: str):
