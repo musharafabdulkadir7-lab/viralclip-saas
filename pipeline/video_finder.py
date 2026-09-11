@@ -102,8 +102,12 @@ def _http_get(url: str, params: dict) -> dict:
 
 
 def find_licensed_cc_videos(niche: str, max_results: int = 20) -> list[VideoCandidate]:
+    return find_public_domain_videos(niche=niche, max_results=max_results)
+
+
+def find_public_domain_videos(niche: str, max_results: int = 20) -> list[VideoCandidate]:
     if not settings.youtube_api_key:
-        raise VideoFinderError("YOUTUBE_API_KEY is required for licensed_cc mode.")
+        raise VideoFinderError("YOUTUBE_API_KEY is required for public_domain / licensed_cc mode.")
 
     used = load_used_videos()
     cutoff = (datetime.now() - timedelta(days=settings.max_age_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -122,7 +126,7 @@ def find_licensed_cc_videos(niche: str, max_results: int = 20) -> list[VideoCand
 
     video_ids = [item["id"]["videoId"] for item in data.get("items", []) if item.get("id", {}).get("videoId")]
     if not video_ids:
-        raise VideoFinderError(f"No CC-licensed videos found for '{niche}'.")
+        raise VideoFinderError(f"No CC-licensed / public domain videos found for '{niche}'.")
 
     detail_data = _http_get("https://www.googleapis.com/youtube/v3/videos", {
         "part": "contentDetails,statistics,snippet,status", "id": ",".join(video_ids), "key": settings.youtube_api_key,
@@ -154,6 +158,92 @@ def find_licensed_cc_videos(niche: str, max_results: int = 20) -> list[VideoCand
     if not top:
         raise VideoFinderError(f"No qualifying CC-licensed videos found for '{niche}' after filtering.")
     return top
+
+
+def get_own_channel_videos(creds_dict: dict, max_results: int = 10) -> list[VideoCandidate]:
+    """List the connected user's own uploaded videos so they can pick one
+    to clip from. Requires an access token from the youtube.readonly scope
+    already granted during /auth/youtube/connect."""
+    from google.auth.transport.requests import Request as GoogleRequest
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import build
+
+    creds = Credentials(
+        token=creds_dict.get("token"), refresh_token=creds_dict.get("refresh_token"),
+        client_id=creds_dict.get("client_id"), client_secret=creds_dict.get("client_secret"),
+        token_uri="https://oauth2.googleapis.com/token",
+        scopes=["https://www.googleapis.com/auth/youtube.readonly"],
+    )
+    if creds.expired and creds.refresh_token:
+        creds.refresh(GoogleRequest())
+
+    youtube = build("youtube", "v3", credentials=creds)
+
+    channels_res = youtube.channels().list(part="contentDetails", mine=True).execute()
+    items = channels_res.get("items", [])
+    if not items:
+        raise VideoFinderError("No YouTube channel found for this account.")
+    uploads_playlist_id = items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
+
+    playlist_res = youtube.playlistItems().list(
+        part="snippet,contentDetails", playlistId=uploads_playlist_id, maxResults=max_results,
+    ).execute()
+
+    video_ids = [i["contentDetails"]["videoId"] for i in playlist_res.get("items", [])]
+    if not video_ids:
+        return []
+
+    detail_res = youtube.videos().list(part="contentDetails,statistics,snippet", id=",".join(video_ids)).execute()
+
+    candidates = []
+    for item in detail_res.get("items", []):
+        duration_sec = _iso8601_to_seconds(item.get("contentDetails", {}).get("duration", "PT0S"))
+        candidates.append(VideoCandidate(
+            id=item["id"], title=item.get("snippet", {}).get("title", "")[:60],
+            url=f"https://www.youtube.com/watch?v={item['id']}", duration=duration_sec,
+            view_count=int(item.get("statistics", {}).get("viewCount", 0)),
+            channel=item.get("snippet", {}).get("channelTitle", ""),
+            license="owned",  # this is the user's own content, no attribution needed
+        ))
+    return candidates
+
+
+def find_partner_channel_videos(channel_id: str, niche: str = "", max_results: int = 15) -> list[VideoCandidate]:
+    """Search for clippable moments ONLY within a specific channel that has
+    explicitly opted into the clipping program — replaces the old
+    find_licensed_cc_videos() global CC search as the default sourcing path."""
+    if not settings.youtube_api_key:
+        raise VideoFinderError("YOUTUBE_API_KEY is required.")
+
+    search_params = {
+        "part": "id,snippet", "channelId": channel_id, "type": "video", "order": "date",
+        "q": niche or None, "maxResults": max_results, "key": settings.youtube_api_key,
+    }
+    search_params = {k: v for k, v in search_params.items() if v is not None}
+    data = _http_get("https://www.googleapis.com/youtube/v3/search", search_params)
+    video_ids = [i["id"]["videoId"] for i in data.get("items", []) if i.get("id", {}).get("videoId")]
+    if not video_ids:
+        raise VideoFinderError(f"No videos found for partner channel {channel_id}.")
+
+    detail_data = _http_get("https://www.googleapis.com/youtube/v3/videos", {
+        "part": "contentDetails,statistics,snippet", "id": ",".join(video_ids), "key": settings.youtube_api_key,
+    })
+
+    candidates = []
+    for item in detail_data.get("items", []):
+        duration_sec = _iso8601_to_seconds(item.get("contentDetails", {}).get("duration", "PT0S"))
+        if duration_sec < settings.min_duration_sec:
+            continue
+        candidates.append(VideoCandidate(
+            id=item["id"], title=item.get("snippet", {}).get("title", "")[:60],
+            url=f"https://www.youtube.com/watch?v={item['id']}", duration=duration_sec,
+            view_count=int(item.get("statistics", {}).get("viewCount", 0)),
+            channel=item.get("snippet", {}).get("channelTitle", ""),
+            license="partner_licensed",
+            attribution=f"Clipped with permission from {item.get('snippet', {}).get('channelTitle', '')}",
+        ))
+    candidates.sort(key=lambda c: c.view_count, reverse=True)
+    return candidates[: settings.top_n_candidates]
 
 
 def register_uploaded_file(file_path: str, title: str = "Uploaded video") -> VideoCandidate:

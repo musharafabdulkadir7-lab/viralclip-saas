@@ -91,6 +91,7 @@ class ClipJob:
     niche: str = ""
     source_kind: Optional[str] = None
     source: Optional[str] = None
+    partner_channel_id: Optional[str] = None
     auto_upload: bool = True
     layout: str = "cinematic_blur"
     broll_path: Optional[str] = None
@@ -100,18 +101,19 @@ class ClipJob:
     @classmethod
     def from_queue_payload(cls, payload: dict) -> "ClipJob":
         return cls(
-            mode=payload.get("mode", "licensed_cc"), user_id=payload["user_id"], job_id=payload["job_id"],
+            mode=payload.get("mode", "public_domain"), user_id=payload["user_id"], job_id=payload["job_id"],
             niche=payload.get("niche", ""), source_kind=payload.get("source_kind"), source=payload.get("source"),
+            partner_channel_id=payload.get("partner_channel_id"),
             auto_upload=payload.get("auto_upload", True), layout=payload.get("layout", "cinematic_blur"),
             broll_path=payload.get("broll_path"), subtitle_style=payload.get("subtitle_style", "bold_captions"),
             num_clips=min(int(payload.get("num_clips", 1)), settings.max_clips_per_job),
         )
 
     def validate(self) -> list[str]:
-        problems = list(settings.validate()) if self.mode == "licensed_cc" else []
+        problems = list(settings.validate()) if self.mode in ("licensed_cc", "public_domain", "partner_channel") else []
         if self.mode == "own_content" and self.source_kind not in ("file", "channel"):
             problems.append("own_content mode requires source_kind of 'file' or 'channel'.")
-        if self.mode not in ("own_content", "licensed_cc"):
+        if self.mode not in ("own_content", "licensed_cc", "my_upload", "my_channel", "partner_channel", "public_domain"):
             problems.append(f"Unknown mode: {self.mode!r}")
         if self.layout == "split_screen" and not self.broll_path:
             problems.append("split_screen layout requires broll_path (b-roll you own or have licensed).")
@@ -119,25 +121,47 @@ class ClipJob:
 
 
 def _source_video(job: ClipJob):
-    if job.mode == "own_content":
-        if job.source_kind == "file":
-            video = video_finder.register_uploaded_file(job.source, title=job.niche or "My video")
-            return video, video_downloader.DownloadResult(video_path=video.local_path, sub_path=None)
+    if job.mode in ("my_upload",) or (job.mode == "own_content" and job.source_kind == "file"):
+        video = video_finder.register_uploaded_file(job.source, title=job.niche or "My video")
+        return video, video_downloader.DownloadResult(video_path=video.local_path, sub_path=None)
+
+    if job.mode in ("my_channel",) or (job.mode == "own_content" and job.source_kind == "channel"):
         creds = fetch_youtube_creds(job.user_id)
         if not creds:
             raise PipelineError("YouTube account not connected.")
-        raise PipelineError("own_content/channel source listing intentionally left for you to wire to your own channel-picker UI.")
+        candidates = video_finder.get_own_channel_videos(creds)
+        video = next((c for c in candidates if c.id == job.source), None)
+        if not video:
+            raise PipelineError("Selected video not found on your channel.")
+        return video, video_downloader.download_video_and_subs(video.url, video.id)
 
-    candidates = video_finder.find_licensed_cc_videos(niche=job.niche)
-    last_error = None
-    for i, candidate in enumerate(candidates):
-        update_job_status(job.job_id, "running", 25 + i * 5, f"Downloading: {candidate.title[:45]}...", user_id=job.user_id)
-        try:
-            return candidate, video_downloader.download_video_and_subs(candidate.url, candidate.id)
-        except video_downloader.DownloadError as e:
-            last_error = e
-            log.warning("Candidate %s failed, trying next: %s", candidate.id, e)
-    raise PipelineError(f"All candidates failed to download: {last_error}")
+    if job.mode == "partner_channel":
+        if not job.partner_channel_id:
+            raise PipelineError("partner_channel_id is required for partner_channel mode.")
+        candidates = video_finder.find_partner_channel_videos(job.partner_channel_id, niche=job.niche)
+        last_error = None
+        for i, candidate in enumerate(candidates):
+            update_job_status(job.job_id, "running", 25 + i * 5, f"Downloading: {candidate.title[:45]}...", user_id=job.user_id)
+            try:
+                return candidate, video_downloader.download_video_and_subs(candidate.url, candidate.id)
+            except video_downloader.DownloadError as e:
+                last_error = e
+                log.warning("Candidate %s failed, trying next: %s", candidate.id, e)
+        raise PipelineError(f"All candidates failed to download: {last_error}")
+
+    if job.mode in ("public_domain", "licensed_cc"):
+        candidates = video_finder.find_public_domain_videos(niche=job.niche)  # renamed from find_licensed_cc_videos
+        last_error = None
+        for i, candidate in enumerate(candidates):
+            update_job_status(job.job_id, "running", 25 + i * 5, f"Downloading: {candidate.title[:45]}...", user_id=job.user_id)
+            try:
+                return candidate, video_downloader.download_video_and_subs(candidate.url, candidate.id)
+            except video_downloader.DownloadError as e:
+                last_error = e
+                log.warning("Candidate %s failed, trying next: %s", candidate.id, e)
+        raise PipelineError(f"All candidates failed to download: {last_error}")
+
+    raise PipelineError(f"Unknown source mode: {job.mode!r}")
 
 
 def run_clip_pipeline(job: ClipJob) -> None:
@@ -164,10 +188,10 @@ def run_clip_pipeline(job: ClipJob) -> None:
                                          broll_path=job.broll_path, subtitle_style=job.subtitle_style)
             rendered_paths.append((path, seg.caption))
 
-        if job.mode == "licensed_cc":
+        if job.mode in ("licensed_cc", "public_domain"):
             hot_pipeline.trigger_replenish(job.niche)
 
-        attribution = video.attribution if job.mode == "licensed_cc" else ""
+        attribution = video.attribution if job.mode in ("licensed_cc", "public_domain", "partner_channel") else ""
         _finish_and_publish(job, rendered_paths, video.title, attribution, video_id=video.id)
 
     except (PipelineError, video_finder.VideoFinderError, video_downloader.DownloadError, clip_cutter.ClipCutError) as e:
@@ -193,8 +217,9 @@ def _finish_and_publish(job: ClipJob, rendered: list[tuple[str, str]], video_tit
     for i, (path, caption) in enumerate(rendered):
         title = f"#Shorts {caption}"
         desc_lines = [caption, ""]
-        if job.mode == "licensed_cc" and attribution:
-            desc_lines += ["Source (Creative Commons):", attribution, ""]
+        if attribution:
+            prefix = "Source (Creative Commons):" if job.mode in ("licensed_cc", "public_domain") else "Credit:"
+            desc_lines += [prefix, attribution, ""]
         desc_lines.append(f"#Shorts{(' #' + job.niche.replace(' ', '')) if job.niche else ''}")
         desc = "\n".join(desc_lines)
 
@@ -206,7 +231,7 @@ def _finish_and_publish(job: ClipJob, rendered: list[tuple[str, str]], video_tit
         res = youtube_uploader.upload_video_to_youtube(path, title=title, description=desc, tags=["Shorts"] + ([job.niche] if job.niche else []),
                                                          creds_dict=creds, progress_callback=on_progress)
         if res.get("status") == "success":
-            if job.mode == "licensed_cc" and video_id and i == 0:
+            if job.mode in ("licensed_cc", "public_domain") and video_id and i == 0:
                 video_finder.mark_video_used(video_id, video_title)
             update_job_status(job.job_id, "complete", 100, f"Done! {caption} is live on YouTube.", res.get("url", ""), title, job.niche, user_id=job.user_id)
         else:

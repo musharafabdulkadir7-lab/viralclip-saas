@@ -33,8 +33,10 @@ import jwt
 from fastapi import HTTPException, Request
 
 from .config import get_settings
+from .logging_conf import get_logger
 from .redis_client import get_redis
 
+log = get_logger("security")
 settings = get_settings()
 
 SESSION_COOKIE = "clipai_session"
@@ -115,16 +117,22 @@ async def rate_limit(key: str, max_calls: int, window_sec: int) -> None:
     r = get_redis()
     if r is None:
         return  # fail open if Redis is down — availability over strictness
-    now = time.time()
-    zkey = f"rl:{key}"
-    pipe = r.pipeline()
-    pipe.zremrangebyscore(zkey, 0, now - window_sec)
-    pipe.zcard(zkey)
-    pipe.zadd(zkey, {str(now): now})
-    pipe.expire(zkey, window_sec + 5)
-    _, count, *_ = await pipe.execute()
-    if count >= max_calls:
-        raise HTTPException(status_code=429, detail="Too many requests — please slow down.")
+    try:
+        now = time.time()
+        zkey = f"rl:{key}"
+        pipe = r.pipeline()
+        pipe.zremrangebyscore(zkey, 0, now - window_sec)
+        pipe.zcard(zkey)
+        pipe.zadd(zkey, {str(now): now})
+        pipe.expire(zkey, window_sec + 5)
+        _, count, *_ = await pipe.execute()
+        if count >= max_calls:
+            raise HTTPException(status_code=429, detail="Too many requests — please slow down.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.warning("Rate limit check failed (failing open): %s", e)
+        return
 
 
 def stable_user_id_for_email(email: str) -> str:

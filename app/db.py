@@ -123,3 +123,41 @@ class InviteRepo:
             return False
         db.table("invites").update({"redeemed": True, "redeemed_by": user_id}).eq("token", token).execute()
         return True
+
+
+class PartnerChannelRepo:
+    @staticmethod
+    def get_by_channel_id(channel_id: str) -> Optional[dict]:
+        db = get_client()
+        if not db:
+            return None
+        try:
+            res = db.table("partner_channels").select("*").eq("channel_id", channel_id).eq("active", True).execute()
+            return res.data[0] if res.data else None
+        except Exception as e:
+            log.error("PartnerChannelRepo.get_by_channel_id(%s) failed: %s", channel_id, e)
+            return None
+
+    @staticmethod
+    def list_active() -> list[dict]:
+        db = get_client()
+        if not db:
+            return []
+        try:
+            res = db.table("partner_channels").select("*").eq("active", True).execute()
+            return res.data or []
+        except Exception as e:
+            log.error("PartnerChannelRepo.list_active failed: %s", e)
+            return []
+
+    @staticmethod
+    def onboard(channel_id: str, channel_title: str, owner_user_id: str) -> None:
+        db = get_client()
+        if db:
+            try:
+                db.table("partner_channels").insert({
+                    "channel_id": channel_id, "channel_title": channel_title,
+                    "owner_user_id": owner_user_id, "active": True,
+                }).execute()
+            except Exception as e:
+                log.error("PartnerChannelRepo.onboard failed: %s", e)

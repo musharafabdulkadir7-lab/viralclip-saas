@@ -49,6 +49,7 @@ class Settings(BaseSettings):
 
     redis_url: str = "redis://localhost:6379/0"
     redis_url_2: str = ""
+    redis_url_3: str = ""
 
     jwt_signing_key: str = ""  # replaces the old HMAC-with-worker-secret user-token scheme
 

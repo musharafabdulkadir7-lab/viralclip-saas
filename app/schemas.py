@@ -2,23 +2,31 @@ from __future__ import annotations
 
 import re
 from typing import List, Literal, Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ClipRequest(BaseModel):
-    niche: str = Field(..., min_length=1, description="Niche or topic to clip")
-    num_clips: int = Field(1, ge=1, le=5, description="Number of distinct clips (1-5)")
+    source_mode: Literal["my_upload", "my_channel", "partner_channel", "public_domain"] = "public_domain"
+    source_video_id: Optional[str] = None      # required for my_channel / partner_channel
+    partner_channel_id: Optional[str] = None   # required for partner_channel
+    niche: str = Field("", description="Optional topic hint, used for partner/public_domain search")
+    num_clips: int = Field(1, ge=1, le=5)
     layout: Literal["cinematic_blur", "split_screen"] = "cinematic_blur"
     subtitle_style: Literal["bold_captions", "clean_minimal"] = "bold_captions"
-    auto_upload: bool = True
+    auto_upload: bool = False
 
     @field_validator("niche")
     @classmethod
     def validate_niche(cls, v: str) -> str:
-        s = v.strip()
-        if not s:
-            raise ValueError("Niche cannot be blank")
-        return s
+        return v.strip()
+
+    @model_validator(mode="after")
+    def validate_source_and_niche(self) -> "ClipRequest":
+        if self.source_mode == "public_domain" and not self.niche:
+            raise ValueError("Niche cannot be blank for public_domain search")
+        if self.source_mode in ("my_channel", "partner_channel") and not self.source_video_id:
+            raise ValueError(f"source_video_id is required for source_mode={self.source_mode!r}")
+        return self
 
 
 class PublishDraftRequest(BaseModel):

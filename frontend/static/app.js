@@ -175,8 +175,21 @@ async function checkWorkerHeartbeat() {
 }
 setInterval(checkWorkerHeartbeat, 15000);
 
+let currentSourceMode = 'my_upload';
+
 // ─── Studio: Clip Generation ──────────────────────────────────────────────
 function initStudio() {
+  const sourceTabs = document.getElementById('source-tabs');
+  if (sourceTabs) {
+    sourceTabs.addEventListener('click', (e) => {
+      const btn = e.target.closest('.source-tab-btn');
+      if (!btn) return;
+      sourceTabs.querySelectorAll('.source-tab-btn').forEach(b => b.classList.remove('picked'));
+      btn.classList.add('picked');
+      setSourceMode(btn.dataset.mode);
+    });
+  }
+
   const reel = document.getElementById('reel');
   const nicheInput = document.getElementById('niche-input');
   if (reel && nicheInput) {
@@ -195,18 +208,102 @@ function initStudio() {
   }
 }
 
+function setSourceMode(mode) {
+  currentSourceMode = mode;
+  document.querySelectorAll('.source-picker').forEach(el => el.style.display = 'none');
+  const activePicker = document.getElementById(`picker-${mode}`);
+  if (activePicker) activePicker.style.display = 'block';
+
+  if (mode === 'my_channel') loadMyChannelVideos();
+  if (mode === 'partner_channel') loadPartnerChannels();
+}
+
+async function loadMyChannelVideos() {
+  const select = document.getElementById('my-video-select');
+  if (!select) return;
+  select.innerHTML = '<option value="">Loading your videos…</option>';
+  try {
+    const res = await fetch('/api/v1/my-channel/videos');
+    if (!res.ok) {
+      const err = await res.json();
+      select.innerHTML = `<option value="">${err.detail || 'YouTube not connected'}</option>`;
+      return;
+    }
+    const data = await res.json();
+    if (!data.videos || data.videos.length === 0) {
+      select.innerHTML = '<option value="">No videos found on your channel</option>';
+      return;
+    }
+    select.innerHTML = data.videos.map(v => `<option value="${v.id}">${v.title || v.id} (${Math.round((v.duration||0)/60)}m)</option>`).join('');
+  } catch (err) {
+    select.innerHTML = '<option value="">Failed to load videos</option>';
+  }
+}
+
+async function loadPartnerChannels() {
+  const select = document.getElementById('partner-select');
+  if (!select) return;
+  select.innerHTML = '<option value="">Loading partner channels…</option>';
+  try {
+    const res = await fetch('/api/v1/partner-channels');
+    const data = await res.json();
+    if (!data.channels || data.channels.length === 0) {
+      select.innerHTML = '<option value="">No partner channels currently active</option>';
+      return;
+    }
+    select.innerHTML = data.channels.map(c => `<option value="${c.channel_id}">${c.channel_title || c.channel_id}</option>`).join('');
+  } catch (err) {
+    select.innerHTML = '<option value="">Failed to load partner channels</option>';
+  }
+}
+
 async function startGeneration() {
-  const nicheInput = document.getElementById('niche-input');
   const layoutSel = document.getElementById('layout-select');
   const subSel = document.getElementById('subtitle-select');
   const numSel = document.getElementById('numclips-select');
   const autoToggle = document.getElementById('autopost-toggle');
   const runBtn = document.getElementById('run-btn');
 
-  const niche = (nicheInput?.value || 'motivation').trim();
-  if (!niche) {
-    showToast('Please enter a niche or creator', 'error');
-    return;
+  const payload = {
+    source_mode: currentSourceMode,
+    layout: layoutSel?.value || 'cinematic_blur',
+    subtitle_style: subSel?.value || 'bold_captions',
+    num_clips: parseInt(numSel?.value || '1', 10),
+    auto_upload: Boolean(autoToggle?.checked),
+  };
+
+  if (currentSourceMode === 'my_upload') {
+    const uploadInput = document.getElementById('upload-input');
+    const file = uploadInput?.files?.[0];
+    if (!file) {
+      showToast('Please select a video file to upload', 'error');
+      return;
+    }
+    payload.source_video_id = file.name;
+    payload.niche = file.name.replace(/\.[^/.]+$/, "");
+  } else if (currentSourceMode === 'my_channel') {
+    const myVid = document.getElementById('my-video-select')?.value;
+    if (!myVid) {
+      showToast('Please select a video from your YouTube channel', 'error');
+      return;
+    }
+    payload.source_video_id = myVid;
+  } else if (currentSourceMode === 'partner_channel') {
+    const partnerId = document.getElementById('partner-select')?.value;
+    if (!partnerId) {
+      showToast('Please select a partner creator', 'error');
+      return;
+    }
+    payload.partner_channel_id = partnerId;
+    payload.source_video_id = partnerId; // signals partner sourcing target
+  } else if (currentSourceMode === 'public_domain') {
+    const nicheInput = document.getElementById('niche-input');
+    const niche = (nicheInput?.value || '').trim();
+    if (!niche) {
+      showToast('Please enter a topic or niche hint', 'error');
+      return;
+    }
+    payload.niche = niche;
   }
 
   runBtn.disabled = true;
@@ -216,13 +313,7 @@ async function startGeneration() {
     const res = await fetch('/api/v1/generate-clip', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        niche: niche,
-        layout: layoutSel?.value || 'cinematic_blur',
-        subtitle_style: subSel?.value || 'bold_captions',
-        num_clips: parseInt(numSel?.value || '1', 10),
-        auto_upload: Boolean(autoToggle?.checked)
-      })
+      body: JSON.stringify(payload)
     });
 
     if (res.status === 402) {
