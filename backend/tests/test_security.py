@@ -102,3 +102,30 @@ def test_admin_secret_rotation(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         verify_admin(req_bad)
     assert exc.value.status_code == 403
+
+
+def test_atomic_free_tier_consumption_and_refund():
+    from app.db import UserRepo
+    uid = "test_user_atomic_quota"
+    user = UserRepo.get_or_create(uid)
+    user["free_clips_used"] = 0
+    user["license"] = "free_tier"
+
+    # Consuming under limit allows
+    allowed, count = UserRepo.atomic_consume_free_clip(uid, limit=1)
+    assert allowed is True
+    assert count == 1
+
+    # Second consumption at or over limit is rejected
+    allowed2, count2 = UserRepo.atomic_consume_free_clip(uid, limit=1)
+    assert allowed2 is False
+    assert count2 == 1
+
+    # Compensating refund restores quota
+    UserRepo.refund_free_clip(uid)
+    assert UserRepo.get_or_create(uid)["free_clips_used"] == 0
+
+    # Can consume again after refund
+    allowed3, count3 = UserRepo.atomic_consume_free_clip(uid, limit=1)
+    assert allowed3 is True
+    assert count3 == 1

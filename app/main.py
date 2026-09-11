@@ -53,7 +53,7 @@ def create_app() -> FastAPI:
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; img-src 'self' https: data:; "
-            "script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "script-src 'self' https://cdn.jsdelivr.net; style-src 'self' https://fonts.googleapis.com; "
             "font-src https://fonts.gstatic.com; frame-src https://www.youtube.com"
         )
         return response

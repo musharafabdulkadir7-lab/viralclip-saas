@@ -60,9 +60,12 @@ function openBilling() {
 }
 
 async function signOut() {
-  document.cookie = "clipai_session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;";
-  document.cookie = "user_id=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;";
-  window.location.reload();
+  try {
+    await fetch('/api/v1/auth/logout', { method: 'POST' });
+  } catch (e) {
+    console.error('Sign out error:', e);
+  }
+  window.location.href = '/';
 }
 
 async function checkout(tier) {
@@ -88,14 +91,14 @@ async function checkAuthAndProfile() {
   try {
     const res = await fetch('/api/v1/user/profile');
     if (res.status === 401 || res.status === 403) {
-      document.getElementById('gate').style.display = 'flex';
-      document.getElementById('shell').style.display = 'none';
+      document.getElementById('gate').classList.remove('hidden');
+      document.getElementById('shell').classList.add('hidden');
       return false;
     }
     const data = await res.json();
     currentUser = data;
-    document.getElementById('gate').style.display = 'none';
-    document.getElementById('shell').style.display = 'flex';
+    document.getElementById('gate').classList.add('hidden');
+    document.getElementById('shell').classList.remove('hidden');
 
     updateQuotaDisplay(data);
     refreshAccountDetails();
@@ -103,8 +106,8 @@ async function checkAuthAndProfile() {
     checkWorkerHeartbeat();
     return true;
   } catch (e) {
-    document.getElementById('gate').style.display = 'flex';
-    document.getElementById('shell').style.display = 'none';
+    document.getElementById('gate').classList.remove('hidden');
+    document.getElementById('shell').classList.add('hidden');
     return false;
   }
 }
@@ -210,9 +213,9 @@ function initStudio() {
 
 function setSourceMode(mode) {
   currentSourceMode = mode;
-  document.querySelectorAll('.source-picker').forEach(el => el.style.display = 'none');
+  document.querySelectorAll('.source-picker').forEach(el => el.classList.add('hidden'));
   const activePicker = document.getElementById(`picker-${mode}`);
-  if (activePicker) activePicker.style.display = 'block';
+  if (activePicker) activePicker.classList.remove('hidden');
 
   if (mode === 'my_channel') loadMyChannelVideos();
   if (mode === 'partner_channel') loadPartnerChannels();
@@ -570,10 +573,9 @@ function addTime(val = '12:00') {
   const list = document.getElementById('times-list');
   if (!list) return;
   const row = document.createElement('div');
-  row.style.display = 'flex';
-  row.style.gap = '8px';
+  row.className = 'time-row';
   row.innerHTML = `
-    <input type="time" value="${val}" style="flex:1;">
+    <input type="time" value="${val}">
     <button class="btn btn-ghost" type="button" onclick="this.parentElement.remove()">✕</button>
   `;
   list.appendChild(row);

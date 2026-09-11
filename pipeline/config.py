@@ -27,6 +27,11 @@ class WorkerSettings:
     worker_secret: str = field(default_factory=lambda: os.environ.get("WORKER_SECRET", ""))
     api_base_url: str = field(default_factory=lambda: os.environ.get("API_BASE_URL", "http://localhost:8000"))
 
+    redis_url: str = field(default_factory=lambda: os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+    redis_url_2: str = field(default_factory=lambda: os.environ.get("REDIS_URL_2", ""))
+    redis_url_3: str = field(default_factory=lambda: os.environ.get("REDIS_URL_3", ""))
+    redis_url_4: str = field(default_factory=lambda: os.environ.get("REDIS_URL_4", ""))
+
     min_views: int = field(default_factory=lambda: _env_int("CLIPAI_MIN_VIEWS", 50_000))
     min_duration_sec: int = field(default_factory=lambda: _env_int("CLIPAI_MIN_DURATION_SEC", 300))
     max_age_days: int = field(default_factory=lambda: _env_int("CLIPAI_MAX_AGE_DAYS", 730))

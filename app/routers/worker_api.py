@@ -88,14 +88,7 @@ async def analyze_transcript(payload: AnalyzeRequest, user_id: str, token: str =
     return await analyze(payload.transcript, payload.niche)
 
 
-@router.get("/scripts")
-async def get_worker_scripts(_=Depends(verify_admin)):
-    if settings.env == "production":
-        raise HTTPException(status_code=404)
-    import pathlib
-    base = pathlib.Path(__file__).resolve().parents[2] / "worker"
-    pipeline_dir = base / "pipeline" if (base / "pipeline").exists() else pathlib.Path(__file__).resolve().parents[2] / "pipeline"
-    return {"scripts": {p.name: p.read_text(encoding="utf-8") for p in pipeline_dir.glob("*.py")}}
+
 
 
 

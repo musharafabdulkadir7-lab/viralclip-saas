@@ -50,13 +50,17 @@ _redis_used_client = None
 def _get_used_redis():
     global _redis_used_client
     if _redis_used_client is None:
-        try:
-            import redis as _rl
-            c = _rl.Redis.from_url("redis://localhost:6379/0", decode_responses=True, socket_connect_timeout=2)
-            c.ping()
-            _redis_used_client = c
-        except Exception as e:
-            log.debug("Redis unavailable for used-video tracking: %s", e)
+        candidates = [settings.redis_url, settings.redis_url_2, settings.redis_url_3, settings.redis_url_4]
+        for url in filter(None, candidates):
+            try:
+                import redis as _rl
+                c = _rl.Redis.from_url(url, decode_responses=True, socket_connect_timeout=2)
+                c.ping()
+                _redis_used_client = c
+                break
+            except Exception as e:
+                log.debug("Redis candidate %s unavailable: %s", url, e)
+        if _redis_used_client is None:
             _redis_used_client = False
     return _redis_used_client if _redis_used_client else None
 

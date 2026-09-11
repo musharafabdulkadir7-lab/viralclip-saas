@@ -95,7 +95,7 @@ async def google_login_callback(request: Request, state: str = "", code: str = "
 
     existing = UserRepo.get_by_email(email)
     is_new = existing is None
-    user_id = existing["id"] if existing else stable_user_id_for_email(email)
+    user_id = existing["id"] if existing else f"user_{uuid.uuid4().hex[:12]}"
     if is_new:
         UserRepo.get_or_create(user_id)
         UserRepo.update(user_id, {"email": email})

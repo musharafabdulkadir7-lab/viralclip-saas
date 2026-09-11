@@ -17,9 +17,7 @@ async def generate_clip(payload: ClipRequest, user_id: str = Depends(require_use
     await rate_limit(f"generate:{user_id}", *settings.rl_generate_clip)
 
     user = UserRepo.get_or_create(user_id)
-    used = user.get("free_clips_used", 0)
-    if user.get("license") == "free_tier" and used >= settings.free_tier_limit:
-        raise HTTPException(status_code=402, detail=f"Free tier limit reached ({settings.free_tier_limit}). Upgrade required.")
+    is_free = user.get("license") == "free_tier"
 
     if payload.source_mode in ("my_channel",):
         yt_user = UserRepo.get_or_create(user_id)
@@ -32,25 +30,41 @@ async def generate_clip(payload: ClipRequest, user_id: str = Depends(require_use
         if not partner:
             raise HTTPException(status_code=403, detail="That channel hasn't opted into the clipping program.")
 
-    if user.get("license") == "free_tier":
-        UserRepo.increment_free_used(user_id, used)
+    consumed = False
+    new_used = 0
+    if is_free:
+        try:
+            allowed, new_used = UserRepo.atomic_consume_free_clip(user_id, settings.free_tier_limit)
+        except Exception:
+            # Fail closed on billing/database errors
+            raise HTTPException(status_code=503, detail="Billing/quota validation temporarily unavailable. Please retry.")
 
-    job_id = await job_queue.enqueue({
-        "mode": payload.source_mode,
-        "source_kind": "channel" if payload.source_mode == "my_channel" else ("file" if payload.source_mode == "my_upload" else None),
-        "source": payload.source_video_id,
-        "partner_channel_id": payload.partner_channel_id,
-        "niche": payload.niche,
-        "user_id": user_id,
-        "is_free_tier": user.get("license") == "free_tier",
-        "auto_upload": payload.auto_upload,
-        "layout": payload.layout,
-        "subtitle_style": payload.subtitle_style,
-        "num_clips": payload.num_clips,
-        "rights_confirmed": payload.rights_confirmed,  # NEW — audit trail
-    })
-    remaining = max(0, settings.free_tier_limit - (used + 1)) if user.get("license") == "free_tier" else None
+        if not allowed:
+            raise HTTPException(status_code=402, detail=f"Free tier limit reached ({settings.free_tier_limit}). Upgrade required.")
+        consumed = True
 
+    try:
+        job_id = await job_queue.enqueue({
+            "mode": payload.source_mode,
+            "source_kind": "channel" if payload.source_mode == "my_channel" else ("file" if payload.source_mode == "my_upload" else None),
+            "source": payload.source_video_id,
+            "partner_channel_id": payload.partner_channel_id,
+            "niche": payload.niche,
+            "user_id": user_id,
+            "is_free_tier": is_free,
+            "auto_upload": payload.auto_upload,
+            "layout": payload.layout,
+            "subtitle_style": payload.subtitle_style,
+            "num_clips": payload.num_clips,
+            "rights_confirmed": payload.rights_confirmed,  # NEW — audit trail
+        })
+    except Exception as e:
+        # If enqueue fails, compensate and refund the consumed trial clip
+        if consumed:
+            UserRepo.refund_free_clip(user_id)
+        raise HTTPException(status_code=500, detail=f"Failed to queue render job: {e}")
+
+    remaining = max(0, settings.free_tier_limit - new_used) if is_free else None
     return {"status": "success", "job_id": job_id, "free_remaining": remaining}
 
 

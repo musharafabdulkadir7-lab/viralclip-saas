@@ -32,27 +32,34 @@ def get_client() -> Optional[Client]:
         return None
 
 
+_in_memory_users = {}
+
 class UserRepo:
     @staticmethod
     def get_or_create(user_id: str) -> dict:
         db = get_client()
-        default = {"id": user_id, "free_clips_used": 0, "license": "free_tier"}
         if not db:
-            return default
+            if user_id not in _in_memory_users:
+                _in_memory_users[user_id] = {"id": user_id, "free_clips_used": 0, "license": "free_tier"}
+            return _in_memory_users[user_id]
         try:
             res = db.table("users").select("*").eq("id", user_id).execute()
             if res.data:
                 return res.data[0]
+            default = {"id": user_id, "free_clips_used": 0, "license": "free_tier"}
             db.table("users").insert(default).execute()
             return default
         except Exception as e:
             log.error("get_or_create(%s) failed: %s", user_id, e)
-            return default
+            return {"id": user_id, "free_clips_used": 0, "license": "free_tier"}
 
     @staticmethod
     def get_by_email(email: str) -> Optional[dict]:
         db = get_client()
         if not db:
+            for u in _in_memory_users.values():
+                if u.get("email") == email:
+                    return u
             return None
         res = db.table("users").select("*").eq("email", email).execute()
         return res.data[0] if res.data else None
@@ -70,6 +77,66 @@ class UserRepo:
     @staticmethod
     def increment_free_used(user_id: str, current: int) -> None:
         UserRepo.update(user_id, {"free_clips_used": current + 1})
+
+    @staticmethod
+    def atomic_consume_free_clip(user_id: str, limit: int) -> tuple[bool, int]:
+        """Atomically checks and consumes 1 free tier clip if under the limit.
+        Returns (allowed, new_used_count). Fails closed on database errors."""
+        db = get_client()
+        if not db:
+            # When running without DB (in-memory dev/test fallback)
+            # Fetch user, check limit, increment
+            user = UserRepo.get_or_create(user_id)
+            used = user.get("free_clips_used", 0)
+            if used >= limit:
+                return False, used
+            new_used = used + 1
+            user["free_clips_used"] = new_used
+            return True, new_used
+
+        try:
+            # Query current user state
+            res = db.table("users").select("id, license, free_clips_used").eq("id", user_id).execute()
+            if not res.data:
+                # Ensure user exists
+                UserRepo.get_or_create(user_id)
+                res = db.table("users").select("id, license, free_clips_used").eq("id", user_id).execute()
+
+            user = res.data[0]
+            used = user.get("free_clips_used", 0)
+            if user.get("license") != "free_tier":
+                return True, used
+            if used >= limit:
+                return False, used
+
+            # Atomic conditional update: only increment if free_clips_used is still < limit
+            up_res = db.table("users").update({"free_clips_used": used + 1}).eq("id", user_id).eq("free_clips_used", used).execute()
+            if not up_res.data:
+                # Concurrent race lost: another request updated free_clips_used
+                refetch = db.table("users").select("free_clips_used").eq("id", user_id).execute()
+                latest_used = refetch.data[0]["free_clips_used"] if refetch.data else used + 1
+                return False, latest_used
+
+            return True, used + 1
+        except Exception as e:
+            log.error("atomic_consume_free_clip(%s) database error: %s", user_id, e)
+            raise
+
+    @staticmethod
+    def refund_free_clip(user_id: str) -> None:
+        """Compensating action: refunds 1 free clip if subsequent queue enqueue fails."""
+        db = get_client()
+        if not db:
+            user = UserRepo.get_or_create(user_id)
+            user["free_clips_used"] = max(0, user.get("free_clips_used", 1) - 1)
+            return
+        try:
+            res = db.table("users").select("free_clips_used").eq("id", user_id).execute()
+            if res.data:
+                cur = res.data[0].get("free_clips_used", 1)
+                db.table("users").update({"free_clips_used": max(0, cur - 1)}).eq("id", user_id).execute()
+        except Exception as e:
+            log.error("refund_free_clip(%s) failed: %s", user_id, e)
 
 
 class ClipRepo:
