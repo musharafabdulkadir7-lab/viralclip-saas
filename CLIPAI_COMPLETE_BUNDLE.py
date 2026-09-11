@@ -1,6 +1,7 @@
 # ==============================================================================
 # CLIPAI SAAS — COMPLETE PROJECT BUNDLE (ALL-IN-ONE REFERENCE FILE)
 # Contains all backend pipelines, web server, worker client, frontend & config
+# Last updated with latest main.py & client_worker.py hardened v2 architecture
 # ==============================================================================
 
 
