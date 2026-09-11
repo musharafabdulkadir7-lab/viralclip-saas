@@ -24,7 +24,4 @@ dist/
 *.spec
 reset_tier.py
 scratch_check.py
-/test_*.py
 check.py
-!backend/tests/*.py
-!worker/tests/*.py
