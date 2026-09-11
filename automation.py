@@ -1,91 +1,235 @@
-# automation.py
-# Two legal operating modes:
-#   Mode A — user_owned: user supplies their own video file or picks from their own channel
-#   Mode B — cc_search:  YouTube Data API v3 with videoLicense=creativeCommon filter
+# automation.py — ClipAI v2 Unified Pipeline Architecture
+# Clean Legal Modes: own_content (Mode A) & licensed_cc (Mode B)
+
+
+# ============================================================
+# MODULE: config.py
+# ============================================================
+
+"""
+config.py
+Centralized configuration. Loads from environment variables (optionally
+via a .env file if python-dotenv is installed) with sane defaults and
+validation. Every other module should import `settings` from here
+instead of reading os.environ directly.
+"""
+from __future__ import annotations
 
 import os
-import re
-import sys
-import glob
-import json
-import time
-import hmac
-import hashlib
-import shutil
-import subprocess
-import threading
-from datetime import datetime, timedelta
+from dataclasses import dataclass, field
 from pathlib import Path
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+
+def _env_int(name: str, default: int) -> int:
+    val = os.environ.get(name)
+    try:
+        return int(val) if val else default
+    except ValueError:
+        return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    return val.strip().lower() in ("1", "true", "yes", "on")
+
+
+@dataclass(frozen=True)
+class Settings:
+    # ── Paths ──
+    home_dir: Path = field(default_factory=lambda: Path.home() / ".clipai")
+
+    # ── API keys / secrets ──
+    youtube_api_key: str = field(default_factory=lambda: os.environ.get("YOUTUBE_API_KEY", ""))
+    worker_secret: str = field(default_factory=lambda: os.environ.get("WORKER_SECRET", ""))
+    api_base_url: str = field(default_factory=lambda: os.environ.get("API_BASE_URL", "https://viralclip-saas.onrender.com"))
+
+    # ── Redis (optional) ──
+    redis_url: str = field(default_factory=lambda: os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+
+    # ── Sourcing thresholds ──
+    min_views: int = field(default_factory=lambda: _env_int("CLIPAI_MIN_VIEWS", 50_000))
+    min_duration_sec: int = field(default_factory=lambda: _env_int("CLIPAI_MIN_DURATION_SEC", 300))
+    max_age_days: int = field(default_factory=lambda: _env_int("CLIPAI_MAX_AGE_DAYS", 730))
+    top_n_candidates: int = field(default_factory=lambda: _env_int("CLIPAI_TOP_N", 3))
+
+    # ── Rendering ──
+    max_short_duration_sec: int = field(default_factory=lambda: _env_int("CLIPAI_MAX_SHORT_SEC", 56))
+    default_watermark: str = field(default_factory=lambda: os.environ.get("CLIPAI_DEFAULT_WATERMARK", "@YourChannel"))
+    ffmpeg_timeout_sec: int = field(default_factory=lambda: _env_int("CLIPAI_FFMPEG_TIMEOUT", 600))
+
+    # ── Networking / retries ──
+    http_timeout_sec: int = field(default_factory=lambda: _env_int("CLIPAI_HTTP_TIMEOUT", 20))
+    max_retries: int = field(default_factory=lambda: _env_int("CLIPAI_MAX_RETRIES", 3))
+
+    # ── Webhooks ──
+    webhook_url: str = field(default_factory=lambda: os.environ.get("CLIPAI_WEBHOOK_URL", ""))
+    webhook_secret: str = field(default_factory=lambda: os.environ.get("CLIPAI_WEBHOOK_SECRET", ""))
+
+    # ── Logging ──
+    log_level: str = field(default_factory=lambda: os.environ.get("CLIPAI_LOG_LEVEL", "INFO"))
+    log_json: bool = field(default_factory=lambda: _env_bool("CLIPAI_LOG_JSON", False))
+
+    @property
+    def download_dir(self) -> Path:
+        return self.home_dir / "downloaded_videos"
+
+    @property
+    def output_dir(self) -> Path:
+        return self.home_dir / "generated_videos"
+
+    @property
+    def hot_pool_dir(self) -> Path:
+        return self.home_dir / "hot_pool"
+
+    @property
+    def used_videos_file(self) -> Path:
+        return self.home_dir / "used_videos.json"
+
+    def ensure_dirs(self) -> None:
+        for d in (self.home_dir, self.download_dir, self.output_dir, self.hot_pool_dir):
+            d.mkdir(parents=True, exist_ok=True)
+
+    def validate_for_mode(self, mode: str) -> list[str]:
+        """Returns a list of human-readable problems; empty list = OK to run."""
+        problems = []
+        if mode == "licensed_cc" and not self.youtube_api_key:
+            problems.append("YOUTUBE_API_KEY is required for licensed_cc mode.")
+        if not self.worker_secret:
+            problems.append("WORKER_SECRET is not set — credential fetch will fail.")
+        return problems
+
+
+settings = Settings()
+settings.ensure_dirs()
+
+# ============================================================
+# MODULE: logging_setup.py
+# ============================================================
+
+"""
+logging_setup.py
+One place to configure logging for the whole pipeline. Replaces the
+old print()-based logging so output is leveled, timestamped, and
+optionally JSON-formatted for log aggregators.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import sys
+
+from config import settings
+
+
+class _JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exc_info"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=False)
+
+
+def get_logger(name: str) -> logging.Logger:
+    logger = logging.getLogger(name)
+    if logger.handlers:
+        return logger  # already configured
+
+    handler = logging.StreamHandler(sys.stdout)
+    if settings.log_json:
+        handler.setFormatter(_JsonFormatter())
+    else:
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        ))
+    logger.addHandler(handler)
+    logger.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
+    logger.propagate = False
+    return logger
+
+# ============================================================
+# MODULE: video_finder.py
+# ============================================================
+
+"""
+video_finder.py
+Two supported modes for sourcing a source video:
+
+  1. "own_content"  — the user supplies their own file, or a video from
+                       their own authenticated YouTube channel.
+  2. "licensed_cc"  — search YouTube Data API v3 for Creative Commons
+                       licensed videos. Requires YOUTUBE_API_KEY.
+
+No scraping, no client-fingerprint rotation, no proxy evasion. If the
+official API can't find something, the run fails loudly rather than
+falling back to unlicensed scraping.
+"""
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass, asdict
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Optional
+
 import httpx
-from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-# Force UTF-8 output on Windows
-if sys.platform == "win32":
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
+from config import settings
+from logging_setup import get_logger
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SHARED CONFIG
-# ─────────────────────────────────────────────────────────────────────────────
-
-CLIPAI_DIR   = str(Path.home() / ".clipai")
-DOWNLOAD_DIR = os.path.join(CLIPAI_DIR, "downloaded_videos")
-OUTPUT_DIR   = os.path.join(CLIPAI_DIR, "generated_videos")
-HOT_POOL_DIR = os.path.join(CLIPAI_DIR, "hot_pool")
-USED_VIDEOS_FILE = os.path.join(CLIPAI_DIR, "used_videos.json")
-
-for _d in (CLIPAI_DIR, DOWNLOAD_DIR, OUTPUT_DIR, HOT_POOL_DIR):
-    os.makedirs(_d, exist_ok=True)
-
-YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
-API_BASE_URL    = os.environ.get("API_BASE_URL", "https://viralclip-saas.onrender.com")
-WORKER_SECRET   = os.environ.get("WORKER_SECRET", "clipai_worker_sec_997f7c9_v2")
-
-MIN_VIEWS        = 50_000
-MIN_DURATION_SEC = 300
-MAX_AGE_DAYS     = 730
-TOP_N            = 5
+log = get_logger("video_finder")
 
 
-def _safe(text) -> str:
-    """UTF-8 safe logging — preserves emojis and non-English titles."""
-    val = str(text) if text is not None else ""
-    try:
-        enc = getattr(sys.stdout, "encoding", None) or "utf-8"
-        val.encode(enc)
-        return val
-    except Exception:
-        return val.encode("utf-8", errors="replace").decode("utf-8")
+class VideoFinderError(Exception):
+    """Raised when a source video cannot be found/resolved."""
 
 
-def log(msg: str):
-    print(_safe(str(msg)))
+@dataclass
+class VideoCandidate:
+    id: str
+    title: str
+    url: Optional[str] = None
+    local_path: Optional[str] = None
+    duration: int = 0
+    view_count: int = 0
+    channel: str = ""
+    license: str = ""
+    attribution: str = ""
+
+    def to_dict(self) -> dict:
+        return asdict(self)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SECTION 1 — VIDEO SOURCE
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Redis deduplication (keeps cross-worker state on Render)
+# ── Used-video tracking (Redis w/ JSON fallback) ─────────────────────
 USED_VIDEOS_REDIS_KEY = "viralclip:used_videos"
 _redis_used_client = None
+
 
 def _get_used_redis():
     global _redis_used_client
     if _redis_used_client is None:
         try:
             import redis as _rl
-            c = _rl.Redis.from_url(
-                os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
-                decode_responses=True, socket_connect_timeout=2
-            )
+            c = _rl.Redis.from_url(settings.redis_url, decode_responses=True, socket_connect_timeout=2)
             c.ping()
             _redis_used_client = c
-        except Exception:
+        except Exception as e:
+            log.debug("Redis unavailable, falling back to JSON file: %s", e)
             _redis_used_client = False
     return _redis_used_client if _redis_used_client else None
 
@@ -95,141 +239,150 @@ def load_used_videos() -> dict:
     if r:
         try:
             return {vid: {} for vid in r.smembers(USED_VIDEOS_REDIS_KEY)}
-        except Exception:
-            pass
-    if os.path.exists(USED_VIDEOS_FILE):
+        except Exception as e:
+            log.warning("Redis read failed, falling back to JSON: %s", e)
+    if settings.used_videos_file.exists():
         try:
-            with open(USED_VIDEOS_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
+            return json.loads(settings.used_videos_file.read_text())
+        except Exception as e:
+            log.warning("Failed to parse used_videos.json: %s", e)
             return {}
     return {}
 
 
-def mark_video_used(video_id: str, title: str = ""):
+def mark_video_used(video_id: str, title: str = "") -> None:
     r = _get_used_redis()
     if r:
         try:
             r.sadd(USED_VIDEOS_REDIS_KEY, video_id)
-            log(f"[VideoSource] Marked used (Redis): {video_id}")
+            log.info("Marked used (Redis): %s", video_id)
             return
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("Redis write failed, falling back to JSON: %s", e)
     used = load_used_videos()
     used[video_id] = {"title": title, "used_at": datetime.now().isoformat()}
-    with open(USED_VIDEOS_FILE, "w") as f:
-        json.dump(used, f, indent=2)
-    log(f"[VideoSource] Marked used (JSON): {video_id}")
+    settings.used_videos_file.write_text(json.dumps(used, indent=2))
+    log.info("Marked used (JSON fallback): %s", video_id)
 
 
 def _iso8601_to_seconds(duration: str) -> int:
-    match = re.match(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", duration)
+    """Convert YouTube ISO 8601 duration (e.g. 'PT4M13S') to seconds."""
+    pattern = re.compile(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?')
+    match = pattern.match(duration or "")
     if not match:
         return 0
-    return int(match.group(1) or 0)*3600 + int(match.group(2) or 0)*60 + int(match.group(3) or 0)
+    hours, minutes, seconds = (int(g or 0) for g in match.groups())
+    return hours * 3600 + minutes * 60 + seconds
 
 
-def _is_transient_error(exc):
-    if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError)):
-        return True
-    if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code >= 500
-    return False
+_RETRYABLE = (httpx.TransportError, httpx.TimeoutException)
 
 
-@retry(reraise=True, stop=stop_after_attempt(3),
-       wait=wait_exponential(multiplier=1, min=2, max=10),
-       retry=retry_if_exception(_is_transient_error))
+@retry(stop=stop_after_attempt(settings.max_retries), wait=wait_exponential(multiplier=1, min=1, max=8),
+       retry=retry_if_exception_type(_RETRYABLE), reraise=True)
 def _http_get(url: str, params: dict) -> dict:
-    res = httpx.get(url, params=params, timeout=15)
+    res = httpx.get(url, params=params, timeout=settings.http_timeout_sec)
     res.raise_for_status()
     return res.json()
 
 
-# ── MODE B: CC licensed search via YouTube Data API ──────────────────────────
-
-def find_cc_videos(niche: str, max_results: int = 20) -> list:
+# ── Mode 2: licensed_cc ───────────────────────────────────────────────
+def find_licensed_cc_videos(niche: str, max_results: int = 20) -> list[VideoCandidate]:
     """
-    Mode B — find Creative Commons licensed videos via YouTube Data API v3.
-    Only returns videos with videoLicense=creativeCommon. No scraping.
+    Search YouTube Data API v3, restricted to Creative Commons licensed
+    videos only. This is the sole sourcing path for licensed_cc mode —
+    there is intentionally no scraping fallback.
+
+    Raises VideoFinderError if the API key is missing, the request
+    fails after retries, or no qualifying candidates are found.
     """
-    if not YOUTUBE_API_KEY:
-        raise Exception("YOUTUBE_API_KEY not set. Cannot search for CC videos.")
+    if not settings.youtube_api_key:
+        raise VideoFinderError("YOUTUBE_API_KEY is required for licensed_cc mode.")
 
-    used    = load_used_videos()
-    cutoff  = (datetime.now() - timedelta(days=MAX_AGE_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    log(f"[VideoSource] CC search via YouTube API: '{niche}'")
+    used = load_used_videos()
+    log.info("Searching YouTube API (CC-licensed only) for: %r", niche)
 
+    cutoff = (datetime.now() - timedelta(days=settings.max_age_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    search_params = {
+        "part": "id,snippet",
+        "q": niche,
+        "type": "video",
+        "order": "viewCount",
+        "videoDuration": "medium",
+        "publishedAfter": cutoff,
+        "maxResults": max_results,
+        "videoLicense": "creativeCommon",
+        "key": settings.youtube_api_key,
+    }
     try:
-        data = _http_get("https://www.googleapis.com/youtube/v3/search", {
-            "part": "id,snippet", "q": niche, "type": "video",
-            "order": "viewCount", "videoDuration": "medium",
-            "publishedAfter": cutoff, "maxResults": max_results,
-            "videoLicense": "creativeCommon",   # ← hard CC filter at API level
-            "key": YOUTUBE_API_KEY,
-        })
-    except httpx.HTTPStatusError as e:
-        raise Exception(f"YouTube API error {e.response.status_code}: quota exceeded or key invalid.")
+        data = _http_get("https://www.googleapis.com/youtube/v3/search", search_params)
+    except Exception as e:
+        raise VideoFinderError(f"YouTube API search request failed: {e}") from e
 
-    items     = data.get("items", [])
-    video_ids = [i["id"]["videoId"] for i in items if i.get("id", {}).get("videoId")]
+    if "error" in data:
+        raise VideoFinderError(f"YouTube API error: {data['error'].get('message', data['error'])}")
+
+    items = data.get("items", [])
+    video_ids = [item["id"]["videoId"] for item in items if item.get("id", {}).get("videoId")]
     if not video_ids:
-        return []
+        raise VideoFinderError(f"No CC-licensed videos found for '{niche}'. Try a different search term.")
 
+    detail_params = {
+        "part": "contentDetails,statistics,snippet,status",
+        "id": ",".join(video_ids),
+        "key": settings.youtube_api_key,
+    }
     try:
-        detail = _http_get("https://www.googleapis.com/youtube/v3/videos", {
-            "part": "contentDetails,statistics,snippet",
-            "id": ",".join(video_ids),
-            "key": YOUTUBE_API_KEY,
-        })
-    except httpx.HTTPStatusError as e:
-        raise Exception(f"YouTube API details error {e.response.status_code}")
+        detail_data = _http_get("https://www.googleapis.com/youtube/v3/videos", detail_params)
+    except Exception as e:
+        raise VideoFinderError(f"YouTube API detail request failed: {e}") from e
 
-    candidates = []
-    for item in detail.get("items", []):
-        vid_id       = item["id"]
+    candidates: list[VideoCandidate] = []
+    for item in detail_data.get("items", []):
+        vid_id = item["id"]
         if vid_id in used:
             continue
+
+        # Re-verify license server-side — don't trust the search filter alone
+        license_str = item.get("status", {}).get("license", "")
+        if license_str != "creativeCommon":
+            log.debug("Skip (not CC on re-check): %s", vid_id)
+            continue
+
         duration_sec = _iso8601_to_seconds(item.get("contentDetails", {}).get("duration", "PT0S"))
-        view_count   = int(item.get("statistics", {}).get("viewCount", 0))
-        title        = item.get("snippet", {}).get("title", "")[:80]
-        channel      = item.get("snippet", {}).get("channelTitle", "Unknown")
-        channel_id   = item.get("snippet", {}).get("channelId", "")
+        view_count = int(item.get("statistics", {}).get("viewCount", 0))
+        title = item.get("snippet", {}).get("title", "")[:60]
+        channel_name = item.get("snippet", {}).get("channelTitle", "Unknown")
 
-        if duration_sec < MIN_DURATION_SEC:
-            continue
-        if view_count < MIN_VIEWS:
+        if duration_sec < settings.min_duration_sec or view_count < settings.min_views:
             continue
 
-        candidates.append({
-            "id": vid_id,
-            "url": f"https://www.youtube.com/watch?v={vid_id}",
-            "title": title,
-            "channel": channel,
-            "channel_id": channel_id,
-            "duration": duration_sec,
-            "view_count": view_count,
-            "license": "creativeCommon",
-            "mode": "cc_search",
-            # Attribution must appear in every upload description (CC license requirement)
-            "attribution": (
-                f"Original video: \"{title}\" by {channel}\n"
-                f"Source: https://youtu.be/{vid_id}\n"
-                f"Licensed under Creative Commons (CC BY)"
-            ),
-        })
-        log(f"  [CC] {_safe(title[:50])} | {view_count:,} views | {duration_sec//60}min | by {_safe(channel)}")
+        candidates.append(VideoCandidate(
+            id=vid_id,
+            title=title,
+            url=f"https://www.youtube.com/watch?v={vid_id}",
+            duration=duration_sec,
+            view_count=view_count,
+            channel=channel_name,
+            license="creativeCommon",
+            attribution=f"Original by {channel_name} (CC BY) https://youtu.be/{vid_id}",
+        ))
+        log.info("Candidate OK: %r | %s views | %sm | CC BY %s", title, f"{view_count:,}", duration_sec // 60, channel_name)
 
-    candidates.sort(key=lambda x: x["view_count"], reverse=True)
-    return candidates[:TOP_N]
+    candidates.sort(key=lambda c: c.view_count, reverse=True)
+    top = candidates[: settings.top_n_candidates]
+    if not top:
+        raise VideoFinderError(f"No qualifying CC-licensed videos found for '{niche}' after filtering.")
+    return top
 
 
-# ── MODE A: User-owned videos ─────────────────────────────────────────────────
-
-def get_user_own_videos(creds_dict: dict, max_results: int = 20) -> list:
+# ── Mode 1: own_content ────────────────────────────────────────────────
+def get_own_channel_videos(creds_dict: dict, max_results: int = 10) -> list[VideoCandidate]:
     """
-    Mode A — fetch videos from the user's own YouTube channel via their OAuth token.
-    No scraping. User owns full rights to these videos.
+    Lists videos from the *authenticated user's own* YouTube channel via
+    the Data API (uploads playlist). Requires an OAuth token with at
+    least youtube.readonly scope.
     """
     from google.oauth2.credentials import Credentials
     from google.auth.transport.requests import Request
@@ -241,101 +394,84 @@ def get_user_own_videos(creds_dict: dict, max_results: int = 20) -> list:
         client_id=creds_dict.get("client_id"),
         client_secret=creds_dict.get("client_secret"),
         token_uri="https://oauth2.googleapis.com/token",
-        scopes=["https://www.googleapis.com/auth/youtube.readonly",
-                "https://www.googleapis.com/auth/youtube.upload"],
     )
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
 
     youtube = build("youtube", "v3", credentials=creds)
 
-    # Get user's channel ID
-    channel_res = youtube.channels().list(part="id,snippet", mine=True).execute()
-    channel_items = channel_res.get("items", [])
-    if not channel_items:
-        raise Exception("No YouTube channel found for this account.")
-    channel_id   = channel_items[0]["id"]
-    channel_name = channel_items[0]["snippet"]["title"]
-    log(f"[VideoSource] Fetching user's own videos from channel: {_safe(channel_name)}")
+    ch = youtube.channels().list(part="contentDetails", mine=True).execute()
+    items = ch.get("items", [])
+    if not items:
+        raise VideoFinderError("Could not resolve the authenticated user's channel.")
+    uploads_playlist_id = items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
 
-    # List channel's uploads
-    search_res = youtube.search().list(
-        part="id,snippet", channelId=channel_id,
-        type="video", order="date",
-        videoDuration="medium", maxResults=max_results
+    pl = youtube.playlistItems().list(
+        part="snippet,contentDetails", playlistId=uploads_playlist_id, maxResults=max_results,
     ).execute()
 
-    video_ids = [i["id"]["videoId"] for i in search_res.get("items", []) if i.get("id", {}).get("videoId")]
-    if not video_ids:
-        return []
-
-    # Get durations
-    detail_res = youtube.videos().list(
-        part="contentDetails,statistics,snippet",
-        id=",".join(video_ids)
-    ).execute()
-
-    candidates = []
-    for item in detail_res.get("items", []):
-        vid_id       = item["id"]
-        duration_sec = _iso8601_to_seconds(item.get("contentDetails", {}).get("duration", "PT0S"))
-        title        = item.get("snippet", {}).get("title", "")[:80]
-        view_count   = int(item.get("statistics", {}).get("viewCount", 0))
-
-        if duration_sec < 60:   # skip videos under 1 minute
-            continue
-
-        candidates.append({
-            "id": vid_id,
-            "url": f"https://www.youtube.com/watch?v={vid_id}",
-            "title": title,
-            "channel": channel_name,
-            "channel_id": channel_id,
-            "duration": duration_sec,
-            "view_count": view_count,
-            "license": "user_owned",
-            "mode": "user_owned",
-            "attribution": "",  # user owns it — no attribution needed
-        })
-        log(f"  [Own] {_safe(title[:50])} | {duration_sec//60}min")
-
-    return candidates
+    results = []
+    for it in pl.get("items", []):
+        vid_id = it["contentDetails"]["videoId"]
+        results.append(VideoCandidate(
+            id=vid_id,
+            title=it["snippet"]["title"][:60],
+            url=f"https://www.youtube.com/watch?v={vid_id}",
+        ))
+    return results
 
 
-def find_viral_videos(niche: str = "finance", max_results: int = 15,
-                      mode: str = "cc_search", creds_dict: dict = None) -> list:
+def register_uploaded_file(file_path: str, title: str = "Uploaded video") -> VideoCandidate:
     """
-    Unified entry point. mode = 'cc_search' or 'user_owned'.
-    Direct YouTube URLs are always accepted in both modes.
+    own_content mode, file-upload path: the user already gave us the
+    file directly. No search or download step needed.
     """
-    trimmed = niche.strip() if niche else ""
+    p = Path(file_path)
+    if not p.exists():
+        raise VideoFinderError(f"Uploaded file not found: {file_path}")
+    return VideoCandidate(id=p.stem, title=title[:60], local_path=str(p))
 
-    # Direct URL passthrough (works in both modes — user pasting their own URL)
-    if any(x in trimmed for x in ["youtube.com/watch", "youtu.be/", "youtube.com/shorts/"]):
-        log(f"[VideoSource] Direct URL: {trimmed}")
-        return [{
-            "id": "direct",
-            "url": trimmed,
-            "title": "Custom Video",
-            "channel": "Direct",
-            "duration": 600,
-            "view_count": 0,
-            "license": "user_provided",
-            "mode": "user_owned",
-            "attribution": "",
-        }]
+# ============================================================
+# MODULE: video_downloader.py
+# ============================================================
 
-    if mode == "user_owned":
-        if not creds_dict:
-            raise Exception("user_owned mode requires OAuth credentials (creds_dict).")
-        return get_user_own_videos(creds_dict, max_results)
-    else:
-        return find_cc_videos(niche, max_results)
+"""
+video_downloader.py
+Downloads a video + auto-captions for the two supported modes.
+
+- own_content / uploaded file: nothing to download — handled by the
+  caller via video_finder.register_uploaded_file().
+- own_content / user's own channel, and licensed_cc: a single
+  straightforward yt-dlp call, no client-fingerprint rotation and no
+  proxy routing. Neither mode needs to evade bot-detection.
+"""
+from __future__ import annotations
+
+import glob
+import os
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+import yt_dlp
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+from config import settings
+from logging_setup import get_logger
+
+log = get_logger("video_downloader")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SECTION 2 — VIDEO DOWNLOADER
-# ─────────────────────────────────────────────────────────────────────────────
+class DownloadError(Exception):
+    """Raised when a video/subtitle download fails after retries."""
+
+
+@dataclass
+class DownloadResult:
+    video_path: str
+    sub_path: Optional[str] = None
+
 
 def _get_ffmpeg_exe() -> str:
     if getattr(sys, "frozen", False):
@@ -349,124 +485,183 @@ def _get_ffmpeg_exe() -> str:
     return "/usr/bin/ffmpeg"
 
 
-def _write_cookies_file() -> str:
-    cookies_path = os.environ.get("YOUTUBE_COOKIES_FILE", "")
-    if cookies_path and os.path.exists(cookies_path):
-        return cookies_path
-    raw = os.environ.get("YOUTUBE_COOKIES", "")
-    if not raw:
-        return ""
-    raw = raw.replace("\\n", "\n").replace("\\t", "\t")
-    out = ("/tmp/yt_cookies.txt" if sys.platform != "win32"
-           else os.path.join(os.environ.get("TEMP", "."), "yt_cookies.txt"))
-    with open(out, "w", encoding="utf-8") as f:
-        f.write(raw)
-    return out
+class _TransientDownloadError(Exception):
+    """Wraps yt-dlp failures so tenacity knows they're worth retrying."""
 
 
-def download_video_and_subs(url: str, video_id: str) -> dict:
-    """
-    Downloads the video using yt-dlp (no proxy rotation, no client spoofing).
-    For user-owned videos on YouTube this works cleanly with OAuth cookies.
-    For CC videos the standard web client is sufficient — no evasion needed.
-    """
-    import yt_dlp
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-
-    existing_mp4  = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp4")
-    existing_subs = glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}*.vtt"))
-    if os.path.exists(existing_mp4) and os.path.getsize(existing_mp4) > 102400:
-        log(f"[Downloader] Cache hit: {existing_mp4}")
-        return {"video_path": existing_mp4, "sub_path": existing_subs[0] if existing_subs else None}
-
-    ffmpeg_exe   = _get_ffmpeg_exe()
-    cookies_file = _write_cookies_file()
-
-    ydl_opts = {
-        "format": "best[height<=720][ext=mp4]/bestvideo[height<=720]+bestaudio/best",
-        "outtmpl": os.path.join(DOWNLOAD_DIR, f"{video_id}.%(ext)s"),
-        "writeautomaticsub": True, "subtitleslangs": ["en"],
-        "subtitlesformat": "vtt",
-        "quiet": True, "no_warnings": True, "noplaylist": True,
-        "merge_output_format": "mp4",
-        "retries": 5, "fragment_retries": 5,
-        "nocheckcertificate": True,
-        "ffmpeg_location": ffmpeg_exe,
-    }
-    if cookies_file:
-        ydl_opts["cookiefile"] = cookies_file
-
-    log(f"[Downloader] Downloading: {url}")
+@retry(stop=stop_after_attempt(settings.max_retries), wait=wait_exponential(multiplier=1, min=2, max=10),
+       retry=retry_if_exception_type(_TransientDownloadError), reraise=True)
+def _run_ytdlp(ydl_opts: dict, url: str) -> None:
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
-    except Exception as e:
-        log(f"[Downloader] Error: {e}")
-        return {"error": str(e)}
-
-    video_files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}.mp4"))
-    if not video_files:
-        all_f = glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}.*"))
-        video_files = [f for f in all_f if not any(f.endswith(x) for x in [".vtt", ".json", ".srt", ".ytdl"])]
-
-    sub_files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}*.vtt"))
-    if not video_files:
-        return {"error": "Video file not found after download"}
-
-    log(f"[Downloader] Done: {video_files[0]}")
-    return {"video_path": video_files[0], "sub_path": sub_files[0] if sub_files else None}
+    except yt_dlp.utils.DownloadError as e:
+        # Treat as transient (network blip, temporary rate limit) and let
+        # tenacity retry a bounded number of times before giving up.
+        raise _TransientDownloadError(str(e)) from e
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SECTION 3 — CLIP FINDER (AI segment selection)
-# ─────────────────────────────────────────────────────────────────────────────
+def download_video_and_subs(url: str, video_id: str, start_sec: Optional[int] = None,
+                             end_sec: Optional[int] = None) -> DownloadResult:
+    """
+    Downloads the video at 720p and its auto-generated subtitles via a
+    single standard yt-dlp client — no cookies, no proxy, no client
+    rotation. Retries a bounded number of times on transient failures;
+    raises DownloadError if it never succeeds.
+    """
+    settings.download_dir.mkdir(parents=True, exist_ok=True)
+    existing_mp4 = settings.download_dir / f"{video_id}.mp4"
+    existing_subs = glob.glob(str(settings.download_dir / f"{video_id}*.vtt"))
 
-def parse_vtt(vtt_path: str) -> list:
-    entries    = []
-    seen_texts = set()
+    if existing_mp4.exists() and existing_mp4.stat().st_size > 102_400:
+        log.info("Using cached video: %s", existing_mp4)
+        return DownloadResult(video_path=str(existing_mp4), sub_path=existing_subs[0] if existing_subs else None)
+
+    output_template = str(settings.download_dir / f"{video_id}.%(ext)s")
+    ffmpeg_exe = _get_ffmpeg_exe()
+    ffmpeg_dir = os.path.dirname(ffmpeg_exe)
+    if ffmpeg_dir and ffmpeg_dir not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
+
+    log.info("Downloading video: %s", url)
+
+    ydl_opts = {
+        "format": "best[height<=720][ext=mp4]/bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]/best",
+        "outtmpl": output_template,
+        "writeautomaticsub": True,
+        "subtitleslangs": ["en"],
+        "subtitlesformat": "vtt",
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "merge_output_format": "mp4",
+        "retries": 5,
+        "fragment_retries": 5,
+        "nocheckcertificate": True,
+        "ffmpeg_location": ffmpeg_exe,
+    }
+    if start_sec is not None and end_sec is not None:
+        ydl_opts["download_ranges"] = lambda info, ydl: [{"start_time": start_sec, "end_time": end_sec}]
+        log.info("Range-slicing active: %ss -> %ss", start_sec, end_sec)
+
     try:
-        content = open(vtt_path, "r", encoding="utf-8").read()
+        _run_ytdlp(ydl_opts, url)
     except Exception as e:
-        log(f"[ClipFinder] Failed to read VTT: {e}")
+        raise DownloadError(f"Download failed after retries: {e}") from e
+
+    video_files = glob.glob(str(settings.download_dir / f"{video_id}.mp4"))
+    if not video_files:
+        all_files = glob.glob(str(settings.download_dir / f"{video_id}.*"))
+        video_files = [f for f in all_files if not any(f.endswith(ext) for ext in (".vtt", ".json", ".srt", ".ytdl"))]
+    sub_files = glob.glob(str(settings.download_dir / f"{video_id}*.vtt"))
+
+    if not video_files:
+        raise DownloadError("Video file not found after download completed without error.")
+
+    result = DownloadResult(video_path=video_files[0], sub_path=sub_files[0] if sub_files else None)
+    log.info("Download complete: %s", result.video_path)
+    return result
+
+# ============================================================
+# MODULE: clip_finder.py
+# ============================================================
+
+"""
+clip_finder.py
+Reads auto-generated subtitles (VTT format) and calls the backend to
+find the single most engaging 25-55 second clip window. Returns
+start/end timestamps in seconds plus a caption.
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+
+import requests
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+from config import settings
+from logging_setup import get_logger
+
+log = get_logger("clip_finder")
+
+_DEFAULT_START = 60
+_DEFAULT_END = 110
+_MIN_CLIP_SEC = 25
+_MAX_CLIP_SEC = 55
+
+
+@dataclass
+class ClipSegment:
+    start_sec: int
+    end_sec: int
+    caption: str
+    num_parts: int = 1
+
+
+def _fallback_segment(niche: str) -> ClipSegment:
+    return ClipSegment(start_sec=_DEFAULT_START, end_sec=_DEFAULT_END, caption=niche.title() or "Clip")
+
+
+def parse_vtt(vtt_path: str) -> list[dict]:
+    """Parses an auto-caption VTT file into [{start, end, text}, ...]."""
+    try:
+        with open(vtt_path, "r", encoding="utf-8") as f:
+            content = f.read()
+    except Exception as e:
+        log.error("Failed to read VTT %s: %s", vtt_path, e)
         return []
 
     def ts_to_sec(h, m, s, ms):
-        return int(h)*3600 + int(m)*60 + int(s) + int(ms)/1000
+        return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000
 
-    for block in re.split(r"\n\s*\n", content.strip()):
+    blocks = re.split(r"\n\s*\n", content.strip())
+    entries: list[dict] = []
+    seen_texts: set[str] = set()
+
+    for block in blocks:
         lines = block.strip().splitlines()
+        if not lines:
+            continue
+
         ts_line, text_lines = None, []
         for i, line in enumerate(lines):
             if "-->" in line:
-                ts_line    = line
-                text_lines = lines[i+1:]
+                ts_line, text_lines = line, lines[i + 1:]
                 break
         if not ts_line:
             continue
-        m = re.match(r"(\d+):(\d+):(\d+)[\.,](\d+)\s*-->\s*(\d+):(\d+):(\d+)[\.,](\d+)", ts_line)
-        if not m:
+
+        ts_match = re.match(r"(\d+):(\d+):(\d+)[\.,](\d+)\s*-->\s*(\d+):(\d+):(\d+)[\.,](\d+)", ts_line)
+        if not ts_match:
             continue
-        start    = ts_to_sec(*m.groups()[:4])
-        end      = ts_to_sec(*m.groups()[4:])
+
+        start = ts_to_sec(*ts_match.groups()[:4])
+        end = ts_to_sec(*ts_match.groups()[4:])
+
         raw_text = " ".join(text_lines)
+        raw_text = re.sub(r"<\d+:\d+:\d+[\.,]\d+>", "", raw_text)
         raw_text = re.sub(r"<[^>]+>", "", raw_text)
         raw_text = re.sub(r"\s+", " ", raw_text).strip()
-        if not raw_text or raw_text in (" ", "[Music]", "[Applause]"):
+
+        if not raw_text or raw_text in ("[Music]", "[Applause]"):
             continue
         if raw_text in seen_texts:
             continue
         seen_texts.add(raw_text)
+
         entries.append({"start": start, "end": end, "text": raw_text})
 
-    log(f"[ClipFinder] Parsed {len(entries)} subtitle entries.")
+    log.info("Parsed %d subtitle entries from %s", len(entries), vtt_path)
     return entries
 
 
-def build_transcript_block(entries: list, max_chars: int = 8000) -> str:
-    lines, total = [], 0
+def build_transcript_block(entries: list[dict], max_chars: int = 10_000) -> str:
+    lines = []
+    total = 0
     for e in entries:
-        secs = int(e["start"])
-        line = f"[{secs//60:02d}:{secs%60:02d}] {e['text']}"
+        secs_total = int(e["start"])
+        line = f"[{secs_total // 60:02d}:{secs_total % 60:02d}] {e['text']}"
         total += len(line)
         if total > max_chars:
             break
@@ -474,536 +669,898 @@ def build_transcript_block(entries: list, max_chars: int = 8000) -> str:
     return "\n".join(lines)
 
 
-def find_best_segment(sub_path: str, niche: str = "motivation") -> dict:
-    log("[ClipFinder] Finding best 45-60s viral moment...")
+_RETRYABLE = (requests.ConnectionError, requests.Timeout)
+
+
+@retry(stop=stop_after_attempt(settings.max_retries), wait=wait_exponential(multiplier=1, min=1, max=6),
+       retry=retry_if_exception_type(_RETRYABLE), reraise=True)
+def _call_backend(transcript: str, niche: str, user_id: str) -> dict:
+    res = requests.post(
+        f"{settings.api_base_url}/api/v1/worker/analyze-transcript",
+        json={"transcript": transcript, "niche": niche},
+        params={"user_id": user_id},
+        timeout=30,
+    )
+    res.raise_for_status()
+    return res.json()
+
+
+def find_best_segment(sub_path: str, niche: str = "content", user_id: str = "demo_user_123") -> ClipSegment:
+    """
+    Uses the backend to find the best standalone viral-Short moment
+    (25-55s). Falls back to a fixed default window if subtitles are
+    missing or the backend call fails — never crashes the pipeline
+    over a clip-selection hiccup.
+    """
     entries = parse_vtt(sub_path)
     if not entries:
-        return {"start_sec": 60, "end_sec": 110, "caption": niche.title(), "num_parts": 1}
+        log.warning("No subtitle entries — using default window.")
+        return _fallback_segment(niche)
 
-    transcript = build_transcript_block(entries, max_chars=10000)
+    transcript = build_transcript_block(entries)
+
     try:
-        import requests
-        res = requests.post(
-            f"{API_BASE_URL}/api/v1/worker/analyze-transcript",
-            json={"transcript": transcript, "niche": niche},
-            params={"user_id": os.environ.get("CLIPAI_USER_ID", "demo_user_123")},
-            timeout=30
-        )
-        if res.status_code == 200:
-            data      = res.json()
-            start     = data.get("start_sec", 60)
-            end       = data.get("end_sec", start + 50)
-            caption   = data.get("caption", niche.title())
-
-            valid_starts = [int(e["start"]) for e in entries]
-            valid_ends   = [int(e["end"])   for e in entries]
-            snapped_start = min(valid_starts, key=lambda x: abs(x - start)) if valid_starts else start
-            snapped_end   = min(valid_ends,   key=lambda x: abs(x - end))   if valid_ends   else end
-
-            if snapped_end - snapped_start > 60:
-                snapped_end = snapped_start + 60
-            elif snapped_end - snapped_start < 25:
-                snapped_end = snapped_start + 45
-
-            log(f"[ClipFinder] Segment: {snapped_start}s - {snapped_end}s ({snapped_end - snapped_start}s)")
-            return {"start_sec": snapped_start, "end_sec": snapped_end, "caption": caption, "num_parts": 1}
+        data = _call_backend(transcript, niche, user_id)
     except Exception as e:
-        log(f"[ClipFinder] AI request failed: {e}")
-    return {"start_sec": 60, "end_sec": 110, "caption": niche.title(), "num_parts": 1}
+        log.warning("Backend clip-analysis call failed, using default window: %s", e)
+        return _fallback_segment(niche)
+
+    if "error" in data:
+        log.warning("Backend returned error: %s", data["error"])
+        return _fallback_segment(niche)
+
+    start = data.get("start_sec", _DEFAULT_START)
+    end = data.get("end_sec", start + 50)
+    caption = data.get("caption", niche.title())
+
+    valid_starts = [int(e["start"]) for e in entries]
+    valid_ends = [int(e["end"]) for e in entries]
+    snapped_start = min(valid_starts, key=lambda x: abs(x - start)) if valid_starts else start
+    snapped_end = min(valid_ends, key=lambda x: abs(x - end)) if valid_ends else end
+
+    duration = snapped_end - snapped_start
+    if duration > _MAX_CLIP_SEC:
+        snapped_end = snapped_start + _MAX_CLIP_SEC
+    elif duration < _MIN_CLIP_SEC:
+        snapped_end = snapped_start + 45
+
+    log.info("Selected segment %ss-%ss (%ss): %r", snapped_start, snapped_end, snapped_end - snapped_start, caption)
+    return ClipSegment(start_sec=snapped_start, end_sec=snapped_end, caption=caption)
+
+# ============================================================
+# MODULE: clip_cutter.py
+# ============================================================
+
+"""
+clip_cutter.py
+Cuts a clip, crops it to 9:16 for Shorts, burns in captions + watermark.
+
+No speed/fingerprint-evasion transforms. Split-screen b-roll must be
+supplied explicitly by the caller (owned/licensed) — never auto-fetched.
+"""
+from __future__ import annotations
+
+import os
+import random
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Optional
+
+from config import settings
+from logging_setup import get_logger
+
+log = get_logger("clip_cutter")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SECTION 4 — CLIP CUTTER (ffmpeg rendering, no fingerprint evasion)
-# ─────────────────────────────────────────────────────────────────────────────
-
-FFMPEG         = _get_ffmpeg_exe()
-WATERMARK_TEXT = os.environ.get("WATERMARK_TEXT", "@YourChannel")
+class ClipCutError(Exception):
+    """Raised when ffmpeg fails or times out."""
 
 
-def get_best_h264_encoder() -> tuple:
+def _get_ffmpeg() -> str:
+    if getattr(sys, "frozen", False):
+        return os.path.join(sys._MEIPASS, "bin", "ffmpeg.exe")
+    if sys.platform == "win32":
+        try:
+            import imageio_ffmpeg
+            return imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            return "ffmpeg"
+    return "/usr/bin/ffmpeg"
+
+
+FFMPEG = _get_ffmpeg()
+_NOWIN = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def get_best_h264_encoder() -> tuple[str, list[str]]:
+    """Probes ffmpeg/hardware and picks the fastest available H.264 encoder."""
     cpu_cores = os.cpu_count() or 4
     try:
-        res = subprocess.run(
-            [FFMPEG, "-hide_banner", "-encoders"],
-            capture_output=True, text=True, errors="replace",
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        )
+        res = subprocess.run([FFMPEG, "-hide_banner", "-encoders"], capture_output=True, text=True,
+                              errors="replace", creationflags=_NOWIN)
         out = res.stdout
+
         if "h264_nvenc" in out:
             test = subprocess.run(
                 [FFMPEG, "-f", "lavfi", "-i", "color=c=black:s=64x64:d=0.1", "-c:v", "h264_nvenc", "-f", "null", "-"],
-                capture_output=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            )
+                capture_output=True, creationflags=_NOWIN)
             if test.returncode == 0:
-                return "h264_nvenc", ["-preset", "p1", "-cq", "23", "-threads", str(cpu_cores)]
+                log.info("Using NVIDIA NVENC hardware encoding (%d threads).", cpu_cores)
+                return "h264_nvenc", ["-preset", "p1", "-tune", "ull", "-zerolatency", "1", "-2pass", "0",
+                                       "-cq", "23", "-spatial-aq", "1", "-threads", str(cpu_cores)]
         if "h264_videotoolbox" in out:
+            log.info("Using Apple VideoToolbox hardware encoding.")
             return "h264_videotoolbox", ["-realtime", "1", "-q:v", "65"]
         if "h264_qsv" in out:
-            return "h264_qsv", ["-preset", "veryfast", "-q", "23"]
+            log.info("Using Intel QuickSync hardware encoding.")
+            return "h264_qsv", ["-preset", "veryfast", "-q", "23", "-threads", str(cpu_cores)]
         if "h264_amf" in out:
+            log.info("Using AMD AMF hardware encoding.")
             return "h264_amf", ["-quality", "speed", "-rc", "cqp", "-qp_i", "23"]
     except Exception as e:
-        log(f"[ClipCutter] Hardware probe: {e}")
-    return "libx264", ["-preset", "fast", "-crf", "22", "-threads", str(cpu_cores)]
+        log.warning("Hardware encoder probe failed, falling back to CPU: %s", e)
+
+    log.info("Using CPU (libx264) encoding across %d threads.", cpu_cores)
+    return "libx264", ["-preset", "ultrafast", "-crf", "22", "-threads", str(cpu_cores), "-slice-max-size", "0"]
 
 
-def _parse_time(ts):
-    parts = ts.strip().split(":")
-    h, m, s = (parts if len(parts) == 3 else ["00"] + parts)
+def parse_time(ts_str: str) -> float:
+    parts = ts_str.strip().split(":")
+    h, m, s = ("00", *parts) if len(parts) == 2 else parts
     sec, ms = s.split(".") if "." in s else (s, "000")
-    return int(h)*3600 + int(m)*60 + int(sec) + int(ms)/1000.0
+    return int(h) * 3600 + int(m) * 60 + int(sec) + int(ms) / 1000.0
 
 
-def _fmt_ass(sec):
-    sec = max(0, sec)
-    return f"{int(sec//3600)}:{int((sec%3600)//60):02d}:{sec%60:05.2f}"
+def format_ass_time(sec: float) -> str:
+    sec = max(sec, 0)
+    h = int(sec // 3600)
+    m = int((sec % 3600) // 60)
+    s = sec % 60
+    return f"{h}:{m:02d}:{s:05.2f}"
 
 
-def generate_ass_subtitle(vtt_path: str, start_sec: float, duration: float,
-                           output_ass: str, subtitle_style: str = "hormozi") -> bool:
+def generate_ass_subtitle(vtt_path: str, start_sec: int, duration: int, output_ass: str,
+                           subtitle_style: str = "bold_captions") -> bool:
     try:
-        content = open(vtt_path, "r", encoding="utf-8").read()
-    except Exception:
+        content = Path(vtt_path).read_text(encoding="utf-8")
+    except Exception as e:
+        log.error("Failed to read VTT for subtitles: %s", e)
         return False
 
-    is_clean  = subtitle_style == "clean_minimal"
-    font      = "Arial" if is_clean else "Impact"
-    fsize     = "75" if is_clean else "95"
-    margin_v  = "450" if is_clean else "550"
-    outline   = "3" if is_clean else "6"
+    is_clean = subtitle_style == "clean_minimal"
+    font_name = "Arial" if is_clean else "Impact"
+    font_size = "75" if is_clean else "95"
+    margin_v = "450" if is_clean else "550"
+    outline_w = "3" if is_clean else "6"
 
-    header = f"""[Script Info]
+    ass_header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
 PlayResY: 1920
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Main,{font},{fsize},&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,{outline},3,2,10,10,{margin_v},1
-Style: Alt,{font},{fsize},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,{outline},3,2,10,10,{margin_v},1
+Style: Primary,{font_name},{font_size},&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,{outline_w},3,2,10,10,{margin_v},1
+Style: PrimaryWhite,{font_name},{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,{outline_w},3,2,10,10,{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
-    events   = []
-    end_sec  = start_sec + duration
-    alt      = False
+    events = []
+    blocks = re.findall(
+        r"(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}\.\d{3})\n((?:.|\n)*?)(?=\n\n|\Z)", content)
+    end_sec = start_sec + duration
+    use_alt = True
 
-    for st, et, text in re.findall(
-        r"(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}\.\d{3})\n((?:.|\n)*?)(?=\n\n|\Z)",
-        content
-    ):
-        t_start = _parse_time(st) - start_sec
-        t_end   = _parse_time(et) - start_sec
-        if t_end < 0 or t_start > duration:
+    for start_ts, end_ts, text in blocks:
+        t_start, t_end = parse_time(start_ts), parse_time(end_ts)
+        if t_end < start_sec or t_start > end_sec:
             continue
-        text = re.sub(r"<[^>]+>", "", text).strip().replace("\n", " ")
+        t_start -= start_sec
+        t_end -= start_sec
+        text = text.strip().replace("\n", " ")
         if not text:
             continue
-        style = "Alt" if alt else "Main"
-        alt   = not alt
-        events.append(f"Dialogue: 0,{_fmt_ass(t_start)},{_fmt_ass(t_end)},{style},,0,0,0,,{text}")
+        style = "Primary" if use_alt else "PrimaryWhite"
+        use_alt = not use_alt
+        events.append(f"Dialogue: 0,{format_ass_time(t_start)},{format_ass_time(t_end)},{style},,0,0,0,,{text}")
 
     if not events:
         return False
     try:
-        open(output_ass, "w", encoding="utf-8").write(header + "\n".join(events))
+        Path(output_ass).write_text(ass_header + "\n".join(events), encoding="utf-8")
         return True
-    except Exception:
+    except Exception as e:
+        log.error("Failed to write ASS subtitle file: %s", e)
         return False
 
 
-def cut_clip(video_path: str, start_sec: int, end_sec: int, caption: str,
-             watermark: str = None, sub_path: str = None,
-             subtitle_style: str = "hormozi") -> str:
-    """
-    Cuts and formats a 9:16 Short. Cinematic blur background.
-    No fingerprint evasion, no speed manipulation, no gamma tricks.
-    """
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    out_path = os.path.join(OUTPUT_DIR, f"clip_{int(time.time())}.mp4")
-    duration = min(end_sec - start_sec, 60)
-    if duration < 10:
-        duration = 45
+def _esc(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:").replace(",", "\\,")
 
+
+def cut_and_format_clip(
+    video_path: str,
+    start_sec: int,
+    end_sec: int,
+    caption: str,
+    output_filename: Optional[str] = None,
+    watermark: Optional[str] = None,
+    sub_path: Optional[str] = None,
+    broll_path: Optional[str] = None,  # must be caller-owned/licensed b-roll
+    subtitle_style: str = "bold_captions",
+) -> str:
+    """Cuts a clip and formats it to 9:16. Raises ClipCutError on failure."""
+    settings.output_dir.mkdir(parents=True, exist_ok=True)
+    output_filename = output_filename or f"clip_{int(time.time())}.mp4"
+    output_path = str(settings.output_dir / output_filename)
+
+    duration = min(end_sec - start_sec, settings.max_short_duration_sec)
     if len(caption) > 26:
         caption = caption[:23] + "..."
 
-    def esc(t):
-        return t.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:").replace(",", "\\,")
-
-    safe_cap = esc(caption)
-    safe_wm  = esc(watermark or WATERMARK_TEXT)
+    safe_caption = _esc(caption)
+    safe_watermark = _esc(watermark or settings.default_watermark)
 
     ass_filter = ""
     if sub_path and os.path.exists(sub_path):
-        ass_path = os.path.join(OUTPUT_DIR, f"subs_{int(time.time())}.ass")
-        if generate_ass_subtitle(sub_path, start_sec, duration, ass_path, subtitle_style):
-            safe_ass   = ass_path.replace("\\", "/").replace(":", "\\:")
+        ass_path = str(settings.output_dir / f"subs_{int(time.time())}.ass")
+        if generate_ass_subtitle(sub_path, start_sec, duration, ass_path, subtitle_style=subtitle_style):
+            safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
             ass_filter = f",subtitles={safe_ass}"
 
-    encoder, enc_args = get_best_h264_encoder()
-    cpu_threads       = str(os.cpu_count() or 4)
+    encoder, encoder_args = get_best_h264_encoder()
+    cpu_threads = str(os.cpu_count() or 4)
 
-    # Clean 9:16 cinematic blur — no fingerprint manipulation
-    filter_complex = (
-        "[0:v]split=2[bg][fg]; "
-        "[bg]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
-        "crop=1080:1920,boxblur=luma_radius=20:luma_power=2[bg_blur]; "
-        "[fg]scale=1080:1920:force_original_aspect_ratio=decrease:flags=lanczos[fg_sc]; "
-        "[bg_blur][fg_sc]overlay=(W-w)/2:(H-h)/2[merged]; "
-        f"[merged]drawtext=text='{safe_cap}':fontsize=38:fontcolor=white:borderw=2:"
-        f"bordercolor=black:x=(w-text_w)/2:y=h-text_h-350:font=Arial Bold:box=1:boxcolor=black@0.5:boxborderw=12:fix_bounds=1,"
-        f"drawtext=text='{safe_wm}':fontsize=24:fontcolor=white@0.7:borderw=1:"
-        f"bordercolor=black@0.4:x=40:y=80:font=Arial:fix_bounds=1"
-        f"{ass_filter}[v_out]"
+    if broll_path and os.path.exists(broll_path):
+        broll_start = random.randint(0, 60)
+        filter_complex = (
+            "[0:v]scale=1080:960:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:960[top]; "
+            "[1:v]scale=1080:960:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:960[bottom]; "
+            "[top][bottom]vstack=inputs=2[merged]; "
+            "[merged]scale=1080:1920:flags=lanczos,"
+            f"drawtext=text='{safe_caption}':fontsize=38:fontcolor=white:borderw=2:bordercolor=black:"
+            "x=(w-text_w)/2:y=(h/2)-text_h-20:font=Arial Bold:box=1:boxcolor=black@0.55:boxborderw=14:fix_bounds=1,"
+            f"drawtext=text='{safe_watermark}':fontsize=26:fontcolor=white@0.70:borderw=1:bordercolor=black@0.5:"
+            f"x=40:y=80:font=Arial:fix_bounds=1{ass_filter}[v_out]"
+        )
+        cmd = [
+            FFMPEG, "-y", "-threads", cpu_threads,
+            "-ss", str(start_sec), "-t", str(duration), "-i", video_path,
+            "-stream_loop", "-1", "-ss", str(broll_start), "-t", str(duration), "-i", broll_path,
+            "-filter_complex", filter_complex, "-map", "[v_out]", "-map", "0:a",
+            "-r", "30", "-pix_fmt", "yuv420p", "-c:v", encoder, *encoder_args,
+            "-c:a", "aac", "-b:a", "192k", "-map_metadata", "-1", "-movflags", "+faststart", output_path,
+        ]
+        mode = "split-screen"
+    else:
+        filter_complex = (
+            "[0:v]split=2[bg][fg]; "
+            "[bg]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:1920,"
+            "boxblur=luma_radius=28:luma_power=2:chroma_radius=14:chroma_power=2,"
+            "eq=brightness=-0.12[bg_blurred]; "
+            "[fg]scale=1080:1920:force_original_aspect_ratio=decrease:flags=lanczos[fg_scaled]; "
+            "[bg_blurred][fg_scaled]overlay=(W-w)/2:(H-h)/2[merged]; "
+            "[merged]scale=1080:1920:flags=lanczos,"
+            f"drawtext=text='{safe_caption}':fontsize=38:fontcolor=white:borderw=2:bordercolor=black:"
+            "x=(w-text_w)/2:y=h-text_h-350:font=Arial Bold:box=1:boxcolor=black@0.55:boxborderw=14:fix_bounds=1,"
+            f"drawtext=text='{safe_watermark}':fontsize=26:fontcolor=white@0.70:borderw=1:bordercolor=black@0.5:"
+            f"x=40:y=80:font=Arial:fix_bounds=1{ass_filter}[v_out]"
+        )
+        cmd = [
+            FFMPEG, "-y", "-threads", cpu_threads,
+            "-ss", str(start_sec), "-t", str(duration), "-i", video_path,
+            "-filter_complex", filter_complex, "-map", "[v_out]", "-map", "0:a",
+            "-r", "30", "-pix_fmt", "yuv420p", "-c:v", encoder, *encoder_args,
+            "-c:a", "aac", "-b:a", "192k", "-map_metadata", "-1", "-movflags", "+faststart", output_path,
+        ]
+        mode = "cinematic blur"
+
+    log.info("Processing %ss-%ss (%ss) | %r | encoder=%s mode=%s", start_sec, end_sec, duration, caption, encoder, mode)
+
+    try:
+        subprocess.run(cmd, timeout=settings.ffmpeg_timeout_sec, check=True, capture_output=True, creationflags=_NOWIN)
+    except subprocess.CalledProcessError as e:
+        err = e.stderr.decode(errors="replace")[:800]
+        raise ClipCutError(f"ffmpeg failed: {err}") from e
+    except subprocess.TimeoutExpired as e:
+        raise ClipCutError(f"ffmpeg timed out after {settings.ffmpeg_timeout_sec}s") from e
+
+    size_mb = os.path.getsize(output_path) / (1024 * 1024)
+    log.info("Done: %s (%.1f MB)", output_path, size_mb)
+    return output_path
+
+
+def cut_clip(
+    video_path: str,
+    start_sec: int,
+    end_sec: int,
+    caption: str,
+    watermark: Optional[str] = None,
+    sub_path: Optional[str] = None,
+    broll_path: Optional[str] = None,
+    subtitle_style: str = "bold_captions",
+) -> str:
+    out_name = f"clip_{int(time.time())}.mp4"
+    actual_end = min(start_sec + 55, end_sec)
+    if actual_end <= start_sec:
+        actual_end = start_sec + 45
+    return cut_and_format_clip(
+        video_path=video_path, start_sec=start_sec, end_sec=actual_end, caption=caption,
+        output_filename=out_name, watermark=watermark, sub_path=sub_path,
+        broll_path=broll_path, subtitle_style=subtitle_style,
     )
 
-    cmd = [
-        FFMPEG, "-y", "-threads", cpu_threads,
-        "-ss", str(start_sec), "-t", str(duration), "-i", video_path,
-        "-filter_complex", filter_complex,
-        "-map", "[v_out]", "-map", "0:a",
-        "-r", "30", "-pix_fmt", "yuv420p",
-        "-c:v", encoder, *enc_args,
-        "-c:a", "aac", "-b:a", "192k",
-        "-map_metadata", "-1",
-        "-movflags", "+faststart",
-        out_path,
-    ]
-    log(f"[ClipCutter] {start_sec}s-{end_sec}s ({duration}s) | encoder: {encoder}")
-    try:
-        subprocess.run(cmd, timeout=600, check=True, capture_output=True,
-                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        mb = os.path.getsize(out_path) / 1024 / 1024
-        log(f"[ClipCutter] Done: {out_path} ({mb:.1f} MB)")
-        return out_path
-    except subprocess.CalledProcessError as e:
-        log(f"[ClipCutter] ffmpeg error: {e.stderr.decode(errors='replace')[:600]}")
-        return ""
-    except subprocess.TimeoutExpired:
-        log("[ClipCutter] ffmpeg timed out.")
-        return ""
+# ============================================================
+# MODULE: youtube_uploader.py
+# ============================================================
+
+"""
+youtube_uploader.py
+Resumable, chunked upload to YouTube via the Data API, with OAuth
+token auto-refresh.
+"""
+from __future__ import annotations
+
+import time
+from typing import Callable, Optional
+
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+
+from config import settings
+from logging_setup import get_logger
+
+log = get_logger("youtube_uploader")
+
+SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+CHUNK_SIZE = 16 * 1024 * 1024  # 16MB — fewer round trips for typical Shorts file sizes
+MAX_UPLOAD_RETRIES = 5
 
 
-def cut_multipart_clips(*args, **kwargs) -> list:
-    kwargs.pop("num_parts", None)
-    p = cut_clip(*args, **kwargs)
-    return [p] if p else []
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SECTION 5 — HOT PIPELINE (pre-bake cache)
-# ─────────────────────────────────────────────────────────────────────────────
-
-_replenishing: set = set()
-_hot_lock = threading.Lock()
-
-
-def get_hot_clip(niche: str) -> dict:
-    key      = niche.lower().replace(" ", "_")
-    niche_dir = os.path.join(HOT_POOL_DIR, key)
-    if not os.path.exists(niche_dir):
-        return None
-    for mf in glob.glob(os.path.join(niche_dir, "*.json")):
-        try:
-            data  = json.load(open(mf, encoding="utf-8"))
-            clips = data.get("clip_paths", [])
-            if clips and all(os.path.exists(c) and os.path.getsize(c) > 102400 for c in clips):
-                os.remove(mf)
-                log(f"[HotPipeline] Cache hit for '{niche}'")
-                return data
-        except Exception:
-            pass
-    return None
-
-
-def prebake_clip_worker(niche: str, mode: str = "cc_search", creds_dict: dict = None):
-    key = niche.lower().replace(" ", "_")
-    with _hot_lock:
-        if key in _replenishing:
-            return
-        _replenishing.add(key)
-    try:
-        niche_dir = os.path.join(HOT_POOL_DIR, key)
-        os.makedirs(niche_dir, exist_ok=True)
-        if len(glob.glob(os.path.join(niche_dir, "*.json"))) >= 2:
-            return
-        log(f"[HotPipeline] Pre-baking '{niche}' in background...")
-        candidates = find_viral_videos(niche=niche, mode=mode, creds_dict=creds_dict)
-        if not candidates:
-            return
-        video, dl = None, {}
-        for c in candidates:
-            dl = download_video_and_subs(c["url"], c["id"])
-            if dl.get("video_path"):
-                video = c
-                break
-        if not video:
-            return
-        clip_info = find_best_segment(dl["sub_path"], niche) if dl.get("sub_path") else                     {"start_sec": 60, "end_sec": 110, "caption": niche.title(), "num_parts": 1}
-        clip_path = cut_clip(dl["video_path"], clip_info["start_sec"], clip_info["end_sec"],
-                              clip_info.get("caption", niche.title()), sub_path=dl.get("sub_path"))
-        if not clip_path:
-            return
-        mf = os.path.join(niche_dir, f"hot_{video['id']}_{int(time.time())}.json")
-        json.dump({
-            "niche": niche, "video_id": video["id"], "video_title": video["title"],
-            "clip_info": clip_info, "clip_paths": [clip_path],
-            "attribution": video.get("attribution", ""),
-            "license": video.get("license", ""),
-            "created_at": time.time()
-        }, open(mf, "w", encoding="utf-8"), indent=2)
-        log(f"[HotPipeline] Pre-baked clip ready.")
-    except Exception as e:
-        log(f"[HotPipeline] Error: {e}")
-    finally:
-        with _hot_lock:
-            _replenishing.discard(key)
-
-
-def clear_stale_cache(keep_niche: str = None):
-    keep_key = keep_niche.lower().replace(" ", "_") if keep_niche else None
-    if os.path.exists(HOT_POOL_DIR):
-        for entry in os.listdir(HOT_POOL_DIR):
-            if keep_key and entry == keep_key:
-                continue
-            shutil.rmtree(os.path.join(HOT_POOL_DIR, entry), ignore_errors=True)
-    for f in Path(DOWNLOAD_DIR).glob("*.*"):
-        try:
-            f.unlink()
-        except Exception:
-            pass
-
-
-def trigger_replenish(niche: str, mode: str = "cc_search", creds_dict: dict = None):
-    t = threading.Thread(target=prebake_clip_worker, args=(niche, mode, creds_dict), daemon=True)
-    t.start()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SECTION 6 — YOUTUBE UPLOADER
-# ─────────────────────────────────────────────────────────────────────────────
-
-YOUTUBE_SCOPES = [
-    "https://www.googleapis.com/auth/youtube.upload",
-    "https://www.googleapis.com/auth/youtube.readonly",
-]
+class UploadError(Exception):
+    """Raised when authentication or upload ultimately fails."""
 
 
 def get_authenticated_service(creds_dict: dict):
-    from google.oauth2.credentials import Credentials
-    from google.auth.transport.requests import Request
-    from googleapiclient.discovery import build
     if not creds_dict:
         return None
+
     creds = Credentials(
         token=creds_dict.get("token"),
         refresh_token=creds_dict.get("refresh_token"),
         client_id=creds_dict.get("client_id"),
         client_secret=creds_dict.get("client_secret"),
         token_uri="https://oauth2.googleapis.com/token",
-        scopes=YOUTUBE_SCOPES,
+        scopes=SCOPES,
     )
+
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        try:
-            from supabase import create_client
-            user_id = creds_dict.get("user_id")
-            sb_url  = os.environ.get("SUPABASE_URL", "")
-            sb_key  = os.environ.get("SUPABASE_KEY", "")
-            if sb_url and sb_key and user_id:
-                create_client(sb_url, sb_key).table("users").update(
-                    {"youtube_access_token": creds.token}
-                ).eq("id", user_id).execute()
-        except Exception as e:
-            log(f"[Auth] Token save warning: {e}")
+        _save_refreshed_token(creds_dict.get("user_id"), creds.token)
+
     return build("youtube", "v3", credentials=creds)
 
 
-def upload_video_to_youtube(video_path: str, title: str, description: str,
-                             tags: list, creds_dict: dict,
-                             progress_callback=None) -> dict:
-    from googleapiclient.http import MediaFileUpload
+def _save_refreshed_token(user_id: Optional[str], new_token: str) -> None:
+    """Best-effort save of the refreshed access token back to storage."""
+    try:
+        from supabase import create_client
+        import os
+        supabase_url = os.environ.get("SUPABASE_URL", "")
+        supabase_key = os.environ.get("SUPABASE_KEY", "")
+        if supabase_url and supabase_key and user_id:
+            sb = create_client(supabase_url, supabase_key)
+            sb.table("users").update({"youtube_access_token": new_token}).eq("id", user_id).execute()
+            log.info("Refreshed and saved new YouTube access token for user %s.", user_id)
+    except Exception as e:
+        log.warning("Could not persist refreshed token: %s", e)
+
+
+def upload_video_to_youtube(
+    video_path: str,
+    title: str,
+    description: str,
+    tags: list[str],
+    creds_dict: dict,
+    progress_callback: Optional[Callable[[int], None]] = None,
+    privacy_status: str = "public",
+) -> dict:
+    """
+    Uploads a video to YouTube. Returns {"status": "success", "video_id":
+    ..., "url": ...} on success or {"error": ...} on failure — never
+    raises, so callers can report a clean job-status error either way.
+    """
+    import os
     if not os.path.exists(video_path):
-        return {"error": f"Video not found: {video_path}"}
+        return {"error": f"Video file not found at {video_path}"}
+
     try:
         youtube = get_authenticated_service(creds_dict)
     except Exception as e:
         return {"error": f"Auth error: {e}"}
     if not youtube:
-        return {"error": "Authentication failed."}
+        return {"error": "Authentication failed. Missing or invalid credentials."}
+
+    log.info("Starting YouTube upload: %s", video_path)
 
     body = {
         "snippet": {"title": title, "description": description, "tags": tags, "categoryId": "22"},
-        "status":  {"privacyStatus": "public"},
+        "status": {"privacyStatus": privacy_status},
     }
-    media   = MediaFileUpload(video_path, chunksize=16*1024*1024, resumable=True)
-    request = youtube.videos().insert(part=",".join(body.keys()), body=body, media_body=media)
 
-    response, retries = None, 0
+    media_file = MediaFileUpload(video_path, chunksize=CHUNK_SIZE, resumable=True)
+    request = youtube.videos().insert(part=",".join(body.keys()), body=body, media_body=media_file)
+
+    response = None
+    retries = 0
     while response is None:
         try:
             status, response = request.next_chunk()
-            if status and progress_callback:
-                try:
-                    progress_callback(int(status.progress() * 100))
-                except Exception:
-                    pass
+            if status:
+                pct = int(status.progress() * 100)
+                log.info("Upload progress: %d%%", pct)
+                if progress_callback:
+                    try:
+                        progress_callback(pct)
+                    except Exception as e:
+                        log.warning("progress_callback raised: %s", e)
         except Exception as e:
             retries += 1
-            if retries > 5:
+            if retries > MAX_UPLOAD_RETRIES:
+                log.error("Upload failed after %d retries: %s", MAX_UPLOAD_RETRIES, e)
                 return {"error": str(e)}
+            log.warning("Upload connection error (attempt %d/%d), retrying...", retries, MAX_UPLOAD_RETRIES)
             time.sleep(2 * retries)
 
-    vid_id = response.get("id")
-    return {"status": "success", "video_id": vid_id, "url": f"https://youtube.com/shorts/{vid_id}"}
+    log.info("Upload complete: video_id=%s", response.get("id"))
+    return {
+        "status": "success",
+        "video_id": response.get("id"),
+        "url": f"https://youtube.com/shorts/{response.get('id')}",
+    }
+
+# ============================================================
+# MODULE: hot_pipeline.py
+# ============================================================
+
+"""
+hot_pipeline.py
+Speculative pre-bake cache for licensed_cc mode only. own_content is
+tied to a specific user's video and isn't something you can usefully
+pre-render ahead of a request.
+"""
+from __future__ import annotations
+
+import glob
+import json
+import threading
+import time
+from pathlib import Path
+from typing import Optional
+
+from config import settings
+from logging_setup import get_logger
+
+log = get_logger("hot_pipeline")
+
+_replenishing_niches: set[str] = set()
+_lock = threading.Lock()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SECTION 7 — WORKER PIPELINE ORCHESTRATOR
-# ─────────────────────────────────────────────────────────────────────────────
+def _niche_key(niche: str) -> str:
+    return "".join(c for c in niche.lower() if c.isalnum() or c in (" ", "_")).strip().replace(" ", "_")
+
+
+def get_hot_clip(niche: str) -> Optional[dict]:
+    niche_dir = settings.hot_pool_dir / _niche_key(niche)
+    if not niche_dir.exists():
+        return None
+
+    for manifest_path in glob.glob(str(niche_dir / "*.json")):
+        try:
+            data = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+            clips = data.get("clip_paths", [])
+            if clips and all(Path(c).exists() and Path(c).stat().st_size > 102_400 for c in clips):
+                Path(manifest_path).unlink()
+                log.info("Hot-cache hit for %r", niche)
+                return data
+        except Exception as e:
+            log.warning("Manifest check failed for %s: %s", manifest_path, e)
+    return None
+
+
+def prebake_clip_worker(niche: str) -> None:
+    niche_key = _niche_key(niche)
+    with _lock:
+        if niche_key in _replenishing_niches:
+            return
+        _replenishing_niches.add(niche_key)
+
+    try:
+        niche_dir = settings.hot_pool_dir / niche_key
+        niche_dir.mkdir(parents=True, exist_ok=True)
+
+        if len(glob.glob(str(niche_dir / "*.json"))) >= 2:
+            return
+
+        log.info("Pre-baking next clip for %r...", niche)
+
+        import clip_cutter
+        import clip_finder
+        import video_downloader
+        import video_finder
+
+        try:
+            candidates = video_finder.find_licensed_cc_videos(niche=niche)
+        except video_finder.VideoFinderError as e:
+            log.warning("Pre-bake: no candidates for %r: %s", niche, e)
+            return
+
+        video, dl = None, None
+        for candidate in candidates:
+            try:
+                dl = video_downloader.download_video_and_subs(candidate.url, candidate.id)
+                video = candidate
+                break
+            except video_downloader.DownloadError as e:
+                log.warning("Pre-bake candidate failed (%s), trying next: %s", candidate.id, e)
+        if not video or not dl:
+            return
+
+        clip_info = clip_finder.find_best_segment(dl.sub_path, niche=niche) if dl.sub_path else \
+            clip_finder.ClipSegment(start_sec=60, end_sec=110, caption=niche.title())
+
+        try:
+            clip_path = clip_cutter.cut_clip(
+                video_path=dl.video_path, start_sec=clip_info.start_sec, end_sec=clip_info.end_sec,
+                caption=clip_info.caption, watermark=f"@{niche.replace(' ', '').capitalize()}",
+                sub_path=dl.sub_path,
+            )
+        except clip_cutter.ClipCutError as e:
+            log.warning("Pre-bake clip cut failed: %s", e)
+            return
+
+        manifest_data = {
+            "niche": niche,
+            "video_id": video.id,
+            "video_title": video.title,
+            "attribution": video.attribution,
+            "clip_info": {"start_sec": clip_info.start_sec, "end_sec": clip_info.end_sec, "caption": clip_info.caption},
+            "clip_paths": [clip_path],
+            "created_at": time.time(),
+        }
+        manifest_file = niche_dir / f"hot_{video.id}_{int(time.time())}.json"
+        manifest_file.write_text(json.dumps(manifest_data, indent=2), encoding="utf-8")
+        log.info("Pre-baked clip ready in cache for %r.", niche)
+
+    except Exception as e:
+        log.error("Pre-baking error for %r: %s", niche, e)
+    finally:
+        with _lock:
+            _replenishing_niches.discard(niche_key)
+
+
+def clear_stale_cache(keep_niche: Optional[str] = None) -> None:
+    import shutil
+    try:
+        keep_key = _niche_key(keep_niche) if keep_niche else None
+        if settings.hot_pool_dir.exists():
+            for entry in settings.hot_pool_dir.iterdir():
+                if keep_key and entry.name == keep_key:
+                    continue
+                if entry.is_dir():
+                    shutil.rmtree(entry, ignore_errors=True)
+        if settings.download_dir.exists():
+            for f in settings.download_dir.glob("*.*"):
+                try:
+                    if f.is_file():
+                        f.unlink()
+                except Exception:
+                    pass
+    except Exception as e:
+        log.warning("Storage clean warning: %s", e)
+
+
+def trigger_replenish(niche: str) -> None:
+    t = threading.Thread(target=prebake_clip_worker, args=(niche,), daemon=True)
+    t.start()
+
+# ============================================================
+# MODULE: worker.py
+# ============================================================
+
+"""
+worker.py
+Mode-branching pipeline entrypoint, usable as a library
+(`run_clip_pipeline(...)`) or from the command line (`python worker.py ...`).
+
+mode="own_content":
+    source_kind="file"    -> local_path points at a file the user uploaded
+    source_kind="channel" -> pick from the user's own connected YouTube channel
+mode="licensed_cc":
+    always searches YouTube Data API for Creative Commons licensed videos
+
+Progress/completion is reported two ways:
+  1. HTTP POST to API_BASE_URL (the existing website job-status API)
+  2. An optional generic webhook (CLIPAI_WEBHOOK_URL), HMAC-signed with
+     CLIPAI_WEBHOOK_SECRET if set — useful for hooking up something like
+     Antigravity or any other external listener without coupling it to
+     the website's specific API shape.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import hmac
+import json
+import sys
+from dataclasses import dataclass
+from typing import Optional
+
+import requests
+
+from config import settings
+from logging_setup import get_logger
+
+log = get_logger("worker")
+
+MODULES_AVAILABLE = True
+try:
+    import clip_cutter
+    import clip_finder
+    import hot_pipeline
+    import video_downloader
+    import video_finder
+    import youtube_uploader
+except ImportError as e:
+    MODULES_AVAILABLE = False
+    log.error("Video modules could not be imported (%s). Running in placeholder mode.", e)
+
+
+class PipelineError(Exception):
+    """Raised for any unrecoverable failure in run_clip_pipeline."""
+
+
+# ── Status reporting ────────────────────────────────────────────────
+def _send_webhook(event: dict) -> None:
+    if not settings.webhook_url:
+        return
+    body = json.dumps(event).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if settings.webhook_secret:
+        sig = hmac.new(settings.webhook_secret.encode(), body, hashlib.sha256).hexdigest()
+        headers["X-ClipAI-Signature"] = sig
+    try:
+        requests.post(settings.webhook_url, data=body, headers=headers, timeout=5)
+    except Exception as e:
+        log.warning("Webhook delivery failed: %s", e)
+
 
 def update_job_status(job_id: str, status: str, progress: int, message: str,
-                      url: str = "", title: str = "", niche: str = "", user_id: str = ""):
-    log(f"[{progress}%] {status}: {_safe(message)}")
+                       url: str = "", title: str = "", niche: str = "", user_id: str = "") -> None:
+    log.info("[%3d%%] %s: %s", progress, status, message)
+
+    event = {"job_id": job_id, "status": status, "progress": progress, "message": message,
+              "url": url, "title": title, "niche": niche, "user_id": user_id or "unknown"}
+    _send_webhook(event)
+
     try:
-        import requests
         if status in ("complete", "draft_ready", "error"):
-            requests.post(f"{API_BASE_URL}/api/v1/worker/complete", json={
+            requests.post(f"{settings.api_base_url}/api/v1/worker/complete", json={
                 "job_id": job_id, "status": status, "message": message,
                 "url": url, "title": title, "niche": niche,
             }, params={"user_id": user_id or "unknown"}, timeout=10)
         else:
-            requests.post(f"{API_BASE_URL}/api/v1/worker/progress", json={
-                "job_id": job_id, "status": status, "progress": progress,
-                "message": message, "url": url,
+            requests.post(f"{settings.api_base_url}/api/v1/worker/progress", json={
+                "job_id": job_id, "status": status, "progress": progress, "message": message, "url": url,
             }, timeout=5)
     except Exception as e:
-        log(f"[Worker] Progress update failed: {e}")
+        log.warning("Failed to update cloud progress: %s", e)
 
 
-def fetch_youtube_creds(user_id: str) -> dict:
+def fetch_youtube_creds(user_id: str) -> Optional[dict]:
+    if not settings.worker_secret:
+        raise PipelineError("WORKER_SECRET is not configured.")
     try:
-        import requests
-        token = hmac.new(WORKER_SECRET.encode(), user_id.encode(), hashlib.sha256).hexdigest()
-        res   = requests.get(f"{API_BASE_URL}/api/v1/user/youtube-creds",
-                             params={"user_id": user_id, "token": token}, timeout=10)
+        token = hmac.new(settings.worker_secret.encode(), user_id.encode(), hashlib.sha256).hexdigest()
+        res = requests.get(f"{settings.api_base_url}/api/v1/user/youtube-creds",
+                            params={"user_id": user_id, "token": token}, timeout=10)
         if res.status_code == 200:
             data = res.json()
             if data.get("refresh_token"):
                 return data
     except Exception as e:
-        log(f"[Worker] Fetch creds failed: {e}")
+        log.warning("Failed to fetch YouTube creds: %s", e)
     return None
 
 
-def run_clip_pipeline(niche: str, user_id: str, job_id: str,
-                      is_free_tier: bool = False, auto_upload: bool = True,
-                      subtitle_style: str = "hormozi",
-                      mode: str = "cc_search"):
-    """
-    Main pipeline. mode = 'cc_search' (default) or 'user_owned'.
-    """
-    try:
-        clear_stale_cache(keep_niche=niche)
-        hot_clip = get_hot_clip(niche)
+# ── Job spec ────────────────────────────────────────────────────────
+@dataclass
+class ClipJob:
+    mode: str                          # "own_content" | "licensed_cc"
+    user_id: str
+    job_id: str
+    niche: str = ""
+    source_kind: Optional[str] = None  # "file" | "channel"
+    source: Optional[str] = None       # file path or channel video id
+    auto_upload: bool = True
+    layout: str = "cinematic_blur"     # "cinematic_blur" | "split_screen"
+    broll_path: Optional[str] = None
+    subtitle_style: str = "bold_captions"
 
-        creds_dict = fetch_youtube_creds(user_id)
+    def validate(self) -> list[str]:
+        problems = settings.validate_for_mode(self.mode)
+        if self.mode == "own_content" and self.source_kind not in ("file", "channel"):
+            problems.append("own_content mode requires source_kind of 'file' or 'channel'.")
+        if self.mode not in ("own_content", "licensed_cc"):
+            problems.append(f"Unknown mode: {self.mode!r}")
+        if self.layout == "split_screen" and not self.broll_path:
+            problems.append("split_screen layout requires broll_path (b-roll you own or have licensed).")
+        return problems
 
-        if hot_clip and hot_clip.get("clip_paths"):
-            clip_paths = hot_clip["clip_paths"]
-            clip_info  = hot_clip.get("clip_info", {"caption": niche.title()})
-            video      = {"id": hot_clip.get("video_id", ""), "title": hot_clip.get("video_title", niche),
-                          "attribution": hot_clip.get("attribution", ""), "url": ""}
-            update_job_status(job_id, "running", 80, "Instant clip ready. Uploading...", user_id=user_id)
-            trigger_replenish(niche, mode=mode, creds_dict=creds_dict)
-        else:
-            # ── 1. Find ──────────────────────────────────────────────────────
-            update_job_status(job_id, "running", 10, "Finding video...", user_id=user_id)
-            try:
-                candidates = find_viral_videos(niche=niche, mode=mode, creds_dict=creds_dict)
-            except Exception as e:
-                update_job_status(job_id, "error", 0, f"Could not find video: {e}", user_id=user_id)
-                return
-            if not candidates:
-                update_job_status(job_id, "error", 0, "No suitable video found.", user_id=user_id)
-                return
 
-            # ── 2. Download ───────────────────────────────────────────────────
-            dl, video = {}, candidates[0]
-            for i, candidate in enumerate(candidates):
-                update_job_status(job_id, "running", 25 + i*5,
-                                  f"Downloading: {candidate['title'][:40]}...", user_id=user_id)
-                dl = download_video_and_subs(candidate["url"], candidate["id"])
-                if dl.get("video_path"):
-                    video = candidate
-                    break
-            if not dl.get("video_path"):
-                update_job_status(job_id, "error", 0, f"Download failed: {dl.get('error', 'unknown')}", user_id=user_id)
-                return
+def _source_video(job: ClipJob):
+    if job.mode == "own_content":
+        if job.source_kind == "file":
+            video = video_finder.register_uploaded_file(job.source, title=job.niche or "My video")
+            return video, video_downloader.DownloadResult(video_path=video.local_path, sub_path=None)
 
-            # ── 3. Find segment ───────────────────────────────────────────────
-            update_job_status(job_id, "running", 50, "AI selecting best 45-60s moment...", user_id=user_id)
-            clip_info = find_best_segment(dl["sub_path"], niche) if dl.get("sub_path") else                         {"start_sec": 60, "end_sec": 110, "caption": niche.title(), "num_parts": 1}
-
-            # ── 4. Cut clip ────────────────────────────────────────────────────
-            update_job_status(job_id, "running", 70, "Rendering Short...", user_id=user_id)
-            clip_path = cut_clip(
-                video_path=dl["video_path"],
-                start_sec=clip_info["start_sec"], end_sec=clip_info["end_sec"],
-                caption=clip_info.get("caption", niche.title()),
-                watermark="Made with ViralClip.ai" if is_free_tier else WATERMARK_TEXT,
-                sub_path=dl.get("sub_path"), subtitle_style=subtitle_style,
-            )
-            if not clip_path:
-                update_job_status(job_id, "error", 0, "Clip rendering failed.", user_id=user_id)
-                return
-
-            clip_paths = [clip_path]
-            trigger_replenish(niche, mode=mode, creds_dict=creds_dict)
-
-        # ── 5. Upload or draft ────────────────────────────────────────────────
-        final_clip  = clip_paths[0]
-        caption     = clip_info.get("caption", niche.title())
-        title       = f"#Shorts {caption}"
-        attribution = video.get("attribution", "")
-
-        # Attribution always goes in the description (CC requirement for Mode B)
-        desc = (
-            f"{caption}\n\n"
-            + (f"--- Original Source ---\n{attribution}\n\n" if attribution else "")
-            + f"Automate your Shorts: https://viralclip-saas.onrender.com\n\n"
-            + f"#Shorts #{niche.replace(' ', '')} #viral"
-        )
-        tags = ["Shorts", niche, "viral"]
-
-        if not auto_upload:
-            update_job_status(job_id, "draft_ready", 100,
-                              "Video ready in your Workplace tab!",
-                              url=final_clip, title=title, niche=niche, user_id=user_id)
-            return
-
-        update_job_status(job_id, "running", 85, "Uploading to YouTube...", user_id=user_id)
+        creds_dict = fetch_youtube_creds(job.user_id)
         if not creds_dict:
-            update_job_status(job_id, "error", 85,
-                              "YouTube account not connected. Click 'Connect YouTube' first.",
-                              user_id=user_id)
-            return
+            raise PipelineError("YouTube account not connected — required to pull from your own channel.")
+        candidates = video_finder.get_own_channel_videos(creds_dict, max_results=10)
+        if not candidates:
+            raise PipelineError("No videos found on your connected channel.")
+        video = next((c for c in candidates if c.id == job.source), candidates[0])
+        dl = video_downloader.download_video_and_subs(video.url, video.id)
+        return video, dl
 
-        upload_res = upload_video_to_youtube(
-            final_clip, title=title, description=desc, tags=tags, creds_dict=creds_dict,
-            progress_callback=lambda p: update_job_status(
-                job_id, "running", int(85 + p * 0.13), f"Uploading... {p}%", user_id=user_id)
+    # licensed_cc
+    candidates = video_finder.find_licensed_cc_videos(niche=job.niche)
+    last_error: Optional[Exception] = None
+    for i, candidate in enumerate(candidates):
+        update_job_status(job.job_id, "running", 25 + i * 5,
+                           f"Downloading: {candidate.title[:45]}...", user_id=job.user_id)
+        try:
+            dl = video_downloader.download_video_and_subs(candidate.url, candidate.id)
+            return candidate, dl
+        except video_downloader.DownloadError as e:
+            last_error = e
+            log.warning("Candidate %s failed, trying next: %s", candidate.id, e)
+    raise PipelineError(f"All candidates failed to download: {last_error}")
+
+
+def run_clip_pipeline(job: ClipJob) -> None:
+    if not MODULES_AVAILABLE:
+        update_job_status(job.job_id, "error", 0, "Video agent modules not found.", user_id=job.user_id)
+        return
+
+    problems = job.validate()
+    if problems:
+        update_job_status(job.job_id, "error", 0, "; ".join(problems), user_id=job.user_id)
+        return
+
+    try:
+        # Hot-cache fast path (licensed_cc only)
+        if job.mode == "licensed_cc":
+            hot_pipeline.clear_stale_cache(keep_niche=job.niche)
+            hot_clip = hot_pipeline.get_hot_clip(job.niche)
+            if hot_clip and hot_clip.get("clip_paths"):
+                clip_path = hot_clip["clip_paths"][0]
+                clip_info = hot_clip.get("clip_info", {"caption": job.niche.title()})
+                video_title = hot_clip.get("video_title", job.niche)
+                attribution = hot_clip.get("attribution", "")
+                update_job_status(job.job_id, "running", 80, "Instant clip ready — finishing up...", user_id=job.user_id)
+                hot_pipeline.trigger_replenish(job.niche)
+                _finish_and_publish(job, clip_path, clip_info.get("caption", job.niche.title()),
+                                     video_title, attribution, video_id=hot_clip.get("video_id", ""))
+                return
+
+        update_job_status(job.job_id, "running", 10, "Finding source video...", user_id=job.user_id)
+        video, dl = _source_video(job)
+
+        update_job_status(job.job_id, "running", 50, "AI is selecting the best moment...", user_id=job.user_id)
+        clip_info = clip_finder.find_best_segment(dl.sub_path, niche=job.niche or video.title) if dl.sub_path \
+            else clip_finder.ClipSegment(start_sec=0, end_sec=50, caption=(job.niche or video.title)[:26])
+
+        update_job_status(job.job_id, "running", 70, "Rendering Short...", user_id=job.user_id)
+        watermark = f"@{(job.niche or 'MyChannel').replace(' ', '')}"
+
+        clip_path = clip_cutter.cut_clip(
+            video_path=dl.video_path, start_sec=clip_info.start_sec, end_sec=clip_info.end_sec,
+            caption=clip_info.caption, watermark=watermark, sub_path=dl.sub_path,
+            broll_path=job.broll_path, subtitle_style=job.subtitle_style,
         )
 
-        if upload_res.get("status") == "success":
-            mark_video_used(video["id"], video.get("title", ""))
-            update_job_status(job_id, "complete", 100, "Done! Video is live.",
-                              upload_res.get("url", ""), title, niche, user_id=user_id)
-        else:
-            update_job_status(job_id, "error", 100,
-                              f"Upload failed: {upload_res.get('error', 'unknown')}", user_id=user_id)
+        if job.mode == "licensed_cc":
+            hot_pipeline.trigger_replenish(job.niche)
 
+        attribution = video.attribution if job.mode == "licensed_cc" else ""
+        _finish_and_publish(job, clip_path, clip_info.caption, video.title, attribution, video_id=video.id)
+
+    except (PipelineError, video_finder.VideoFinderError, video_downloader.DownloadError, clip_cutter.ClipCutError) as e:
+        update_job_status(job.job_id, "error", 0, str(e), user_id=job.user_id)
     except Exception as e:
-        update_job_status(job_id, "error", 0, f"Pipeline error: {e}", user_id=user_id)
+        log.exception("Unexpected pipeline error")
+        update_job_status(job.job_id, "error", 0, f"Unexpected pipeline error: {e}", user_id=job.user_id)
+
+
+def _finish_and_publish(job: ClipJob, clip_path: str, caption: str, video_title: str,
+                         attribution: str, video_id: str) -> None:
+    title = f"#Shorts {caption}"
+    desc_lines = [caption, ""]
+    if job.mode == "licensed_cc" and attribution:
+        # Attribution is mandatory for licensed_cc, not optional.
+        desc_lines += ["Source (Creative Commons):", attribution, ""]
+    desc_lines.append(f"#Shorts{(' #' + job.niche.replace(' ', '')) if job.niche else ''}")
+    desc = "\n".join(desc_lines)
+    tags = ["Shorts"] + ([job.niche] if job.niche else [])
+
+    if not job.auto_upload:
+        update_job_status(job.job_id, "draft_ready", 100, "Rendered and ready for review.",
+                           url=clip_path, title=title, niche=job.niche, user_id=job.user_id)
+        return
+
+    update_job_status(job.job_id, "running", 85, "Uploading to YouTube...", user_id=job.user_id)
+    creds_dict = fetch_youtube_creds(job.user_id)
+    if not creds_dict:
+        update_job_status(job.job_id, "error", 85, "YouTube account not connected.", user_id=job.user_id)
+        return
+
+    def on_upload_progress(pct: int) -> None:
+        update_job_status(job.job_id, "running", int(85 + pct * 0.13), f"Uploading ({pct}%)...", user_id=job.user_id)
+
+    upload_res = youtube_uploader.upload_video_to_youtube(
+        clip_path, title=title, description=desc, tags=tags,
+        creds_dict=creds_dict, progress_callback=on_upload_progress,
+    )
+
+    if upload_res.get("status") == "success":
+        if job.mode == "licensed_cc" and video_id:
+            video_finder.mark_video_used(video_id, video_title)
+        update_job_status(job.job_id, "complete", 100, "Done! Video is live on YouTube.",
+                           upload_res.get("url", ""), title, job.niche, user_id=job.user_id)
+    else:
+        update_job_status(job.job_id, "error", 100, f"Upload failed: {upload_res.get('error')}", user_id=job.user_id)
+
+
+# ── CLI ─────────────────────────────────────────────────────────────
+def _build_arg_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="Run the ClipAI clipping pipeline for one job.")
+    p.add_argument("--mode", required=True, choices=["own_content", "licensed_cc"])
+    p.add_argument("--user-id", required=True)
+    p.add_argument("--job-id", default="cli-job")
+    p.add_argument("--niche", default="")
+    p.add_argument("--source-kind", choices=["file", "channel"], default=None)
+    p.add_argument("--source", default=None, help="File path (source_kind=file) or channel video id (source_kind=channel)")
+    p.add_argument("--no-upload", action="store_true", help="Render only — skip YouTube upload")
+    p.add_argument("--layout", choices=["cinematic_blur", "split_screen"], default="cinematic_blur")
+    p.add_argument("--broll-path", default=None)
+    p.add_argument("--subtitle-style", choices=["bold_captions", "clean_minimal"], default="bold_captions")
+    return p
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    args = _build_arg_parser().parse_args(argv)
+    job = ClipJob(
+        mode=args.mode, user_id=args.user_id, job_id=args.job_id, niche=args.niche,
+        source_kind=args.source_kind, source=args.source, auto_upload=not args.no_upload,
+        layout=args.layout, broll_path=args.broll_path, subtitle_style=args.subtitle_style,
+    )
+    problems = job.validate()
+    if problems:
+        for p in problems:
+            log.error("Config problem: %s", p)
+        return 1
+    run_clip_pipeline(job)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

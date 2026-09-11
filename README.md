@@ -1,32 +1,14 @@
----
-title: ViralClip AI SaaS
-emoji: 🎬
-colorFrom: blue
-colorTo: purple
-sdk: docker
-app_port: 7860
-pinned: false
----
+# ClipAI pipeline (v2)
 
-# ViralClip AI SaaS
+Two legitimate video-sourcing modes, hardened with retries, structured
+logging, type hints, tests, a config file, and a CLI. See `HANDOFF.md` for
+the full architecture writeup and `NOTES.md` for the earlier mode-rewrite
+summary.
 
-Autonomous YouTube Shorts generation powered by AI. Enter a niche, and the system finds viral content, cuts the best segments, adds captions, and uploads directly to YouTube.
-
-## How It Works
-
-1. Enter a niche (e.g. "finance", "motivation", "fitness")
-2. The AI finds viral videos in that category
-3. It clips the most engaging 60-second segment
-4. Captions are burned in and the video is uploaded as a YouTube Short
-
-## Environment Variables (Secrets)
-
-Set these in your Hugging Face Space Secrets panel:
-
-| Secret | Description |
-|---|---|
-| `STRIPE_SECRET_KEY` | Your Stripe API key |
-| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret |
-| `SUPABASE_URL` | Your Supabase project URL |
-| `SUPABASE_KEY` | Your Supabase service key |
-| `REDIS_URL` | Upstash Redis URL (redis://...) |
+## Quick start
+```bash
+pip install -r requirements.txt
+cp .env.example .env   # fill in your keys
+pytest                 # run the test suite
+python worker.py --mode licensed_cc --user-id demo --niche "cooking tips" --no-upload
+```

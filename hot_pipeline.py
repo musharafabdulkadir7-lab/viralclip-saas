@@ -1,178 +1,141 @@
 """
 hot_pipeline.py
-Extreme Hot-Pipeline Engine for ClipAI.
-
-Maintains an asynchronous speculative pre-baked pool of rendered viral clips in RAM/SSD cache.
-When a user requests a clip, it serves a 100% pre-rendered clip in 0.05 seconds,
-bypassing video searching, downloading, and FFmpeg encoding delays.
+Speculative pre-bake cache for licensed_cc mode only. own_content is
+tied to a specific user's video and isn't something you can usefully
+pre-render ahead of a request.
 """
-import os
-import sys
-import time
-import json
+from __future__ import annotations
+
 import glob
+import json
 import threading
+import time
 from pathlib import Path
+from typing import Optional
 
-HOT_POOL_DIR = os.path.join(str(Path.home() / ".clipai"), "hot_pool")
-os.makedirs(HOT_POOL_DIR, exist_ok=True)
+from config import settings
+from logging_setup import get_logger
 
-_replenishing_niches = set()
+log = get_logger("hot_pipeline")
+
+_replenishing_niches: set[str] = set()
 _lock = threading.Lock()
 
-def get_hot_clip(niche: str) -> dict:
-    """
-    Checks if a pre-baked clip is ready in the hot cache for the given niche.
-    Returns metadata and file paths if available, and marks it claimed.
-    """
-    clean_niche = "".join(c for c in niche.lower() if c.isalnum() or c in (" ", "_")).strip()
-    niche_dir = os.path.join(HOT_POOL_DIR, clean_niche.replace(" ", "_"))
-    if not os.path.exists(niche_dir):
+
+def _niche_key(niche: str) -> str:
+    return "".join(c for c in niche.lower() if c.isalnum() or c in (" ", "_")).strip().replace(" ", "_")
+
+
+def get_hot_clip(niche: str) -> Optional[dict]:
+    niche_dir = settings.hot_pool_dir / _niche_key(niche)
+    if not niche_dir.exists():
         return None
 
-    manifests = glob.glob(os.path.join(niche_dir, "*.json"))
-    for manifest_path in manifests:
+    for manifest_path in glob.glob(str(niche_dir / "*.json")):
         try:
-            with open(manifest_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            
-            # Verify that the clip file(s) actually exist on disk and are non-empty
+            data = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
             clips = data.get("clip_paths", [])
-            if clips and all(os.path.exists(c) and os.path.getsize(c) > 102400 for c in clips):
-                # Remove manifest so this clip is not claimed twice
-                os.remove(manifest_path)
-                print(f"[HotPipeline] HOT CACHE HIT! Found pre-baked clip for '{niche}' in 0.05s!")
+            if clips and all(Path(c).exists() and Path(c).stat().st_size > 102_400 for c in clips):
+                Path(manifest_path).unlink()
+                log.info("Hot-cache hit for %r", niche)
                 return data
         except Exception as e:
-            print(f"[HotPipeline] Manifest check warning: {e}")
-            continue
-
+            log.warning("Manifest check failed for %s: %s", manifest_path, e)
     return None
 
 
-def prebake_clip_worker(niche: str, is_free_tier: bool = False):
-    """
-    Background worker that pre-downloads and pre-renders the next viral clip for a niche.
-    """
-    clean_niche = "".join(c for c in niche.lower() if c.isalnum() or c in (" ", "_")).strip()
-    niche_key = clean_niche.replace(" ", "_")
-    
+def prebake_clip_worker(niche: str) -> None:
+    niche_key = _niche_key(niche)
     with _lock:
         if niche_key in _replenishing_niches:
             return
         _replenishing_niches.add(niche_key)
 
     try:
-        niche_dir = os.path.join(HOT_POOL_DIR, niche_key)
-        os.makedirs(niche_dir, exist_ok=True)
+        niche_dir = settings.hot_pool_dir / niche_key
+        niche_dir.mkdir(parents=True, exist_ok=True)
 
-        # Check if already 2 pre-baked clips exist for this niche
-        existing_manifests = glob.glob(os.path.join(niche_dir, "*.json"))
-        if len(existing_manifests) >= 2:
+        if len(glob.glob(str(niche_dir / "*.json"))) >= 2:
             return
 
-        print(f"[HotPipeline] Pre-baking next hot clip in background for '{niche}'...")
+        log.info("Pre-baking next clip for %r...", niche)
 
-        import video_finder
-        import video_downloader
-        import clip_finder
         import clip_cutter
+        import clip_finder
+        import video_downloader
+        import video_finder
 
-        candidates = video_finder.find_viral_videos(niche=niche)
-        if not candidates:
+        try:
+            candidates = video_finder.find_licensed_cc_videos(niche=niche)
+        except video_finder.VideoFinderError as e:
+            log.warning("Pre-bake: no candidates for %r: %s", niche, e)
             return
 
-        video = None
-        dl = {}
+        video, dl = None, None
         for candidate in candidates:
-            dl = video_downloader.download_video_and_subs(candidate["url"], candidate["id"])
-            if dl.get("video_path"):
+            try:
+                dl = video_downloader.download_video_and_subs(candidate.url, candidate.id)
                 video = candidate
                 break
-
-        if not video or not dl.get("video_path"):
+            except video_downloader.DownloadError as e:
+                log.warning("Pre-bake candidate failed (%s), trying next: %s", candidate.id, e)
+        if not video or not dl:
             return
 
-        if dl.get("sub_path"):
-            clip_info = clip_finder.find_best_segment(dl["sub_path"], niche=niche)
-        else:
-            clip_info = {"start_sec": 60, "end_sec": 110, "caption": niche.title(), "num_parts": 1}
+        clip_info = clip_finder.find_best_segment(dl.sub_path, niche=niche) if dl.sub_path else \
+            clip_finder.ClipSegment(start_sec=60, end_sec=110, caption=niche.title())
 
-        watermark = "Generated by ClipAI" if is_free_tier else f"@{niche.replace(' ', '').capitalize()}Viral"
-        broll_path = video_downloader.get_broll_video()
-
-        clip_path = clip_cutter.cut_clip(
-            video_path=dl["video_path"],
-            start_sec=clip_info["start_sec"],
-            end_sec=clip_info["end_sec"],
-            caption=clip_info.get("caption", niche.title()),
-            watermark=watermark,
-            sub_path=dl.get("sub_path"),
-            broll_path=broll_path,
-        )
-
-        if not clip_path:
+        try:
+            clip_path = clip_cutter.cut_clip(
+                video_path=dl.video_path, start_sec=clip_info.start_sec, end_sec=clip_info.end_sec,
+                caption=clip_info.caption, watermark=f"@{niche.replace(' ', '').capitalize()}",
+                sub_path=dl.sub_path,
+            )
+        except clip_cutter.ClipCutError as e:
+            log.warning("Pre-bake clip cut failed: %s", e)
             return
-
-        clip_paths = [clip_path]
 
         manifest_data = {
             "niche": niche,
-            "video_id": video["id"],
-            "video_title": video["title"],
-            "clip_info": clip_info,
-            "clip_paths": clip_paths,
-            "created_at": time.time()
+            "video_id": video.id,
+            "video_title": video.title,
+            "attribution": video.attribution,
+            "clip_info": {"start_sec": clip_info.start_sec, "end_sec": clip_info.end_sec, "caption": clip_info.caption},
+            "clip_paths": [clip_path],
+            "created_at": time.time(),
         }
-
-        ts_int = int(time.time())
-        vid_id = video["id"]
-        manifest_file = os.path.join(niche_dir, f"hot_{vid_id}_{ts_int}.json")
-        with open(manifest_file, "w", encoding="utf-8") as f:
-            json.dump(manifest_data, f, indent=2)
-
-        print(f"[HotPipeline] Single viral Short successfully pre-baked and ready in cache!")
+        manifest_file = niche_dir / f"hot_{video.id}_{int(time.time())}.json"
+        manifest_file.write_text(json.dumps(manifest_data, indent=2), encoding="utf-8")
+        log.info("Pre-baked clip ready in cache for %r.", niche)
 
     except Exception as e:
-        print(f"[HotPipeline] Pre-baking error: {e}")
+        log.error("Pre-baking error for %r: %s", niche, e)
     finally:
         with _lock:
             _replenishing_niches.discard(niche_key)
 
 
-def clear_stale_cache(keep_niche: str = None):
-    """
-    Clears out pre-baked cache files and downloaded videos for all niches except keep_niche.
-    Keeps local SSD storage empty and clean.
-    """
+def clear_stale_cache(keep_niche: Optional[str] = None) -> None:
     import shutil
     try:
-        keep_key = "".join(c for c in keep_niche.lower() if c.isalnum() or c in (" ", "_")).strip().replace(" ", "_") if keep_niche else None
-        
-        # Clean hot pool directories
-        if os.path.exists(HOT_POOL_DIR):
-            for entry in os.listdir(HOT_POOL_DIR):
-                if keep_key and entry == keep_key:
+        keep_key = _niche_key(keep_niche) if keep_niche else None
+        if settings.hot_pool_dir.exists():
+            for entry in settings.hot_pool_dir.iterdir():
+                if keep_key and entry.name == keep_key:
                     continue
-                target_dir = os.path.join(HOT_POOL_DIR, entry)
-                if os.path.isdir(target_dir):
-                    shutil.rmtree(target_dir, ignore_errors=True)
-                    
-        # Also clean old downloaded source videos to save disk space
-        downloaded_dir = Path.home() / ".clipai" / "downloaded_videos"
-        if downloaded_dir.exists():
-            for f in downloaded_dir.glob("*.*"):
+                if entry.is_dir():
+                    shutil.rmtree(entry, ignore_errors=True)
+        if settings.download_dir.exists():
+            for f in settings.download_dir.glob("*.*"):
                 try:
                     if f.is_file():
                         f.unlink()
                 except Exception:
                     pass
-        print(f"[HotPipeline] Storage cleaned. Retained active niche: '{keep_niche or 'none'}'")
     except Exception as e:
-        print(f"[HotPipeline] Storage clean warning: {e}")
+        log.warning("Storage clean warning: %s", e)
 
-def trigger_replenish(niche: str, is_free_tier: bool = False):
-    """Spawns an async background thread to keep the hot pool warm."""
-    t = threading.Thread(target=prebake_clip_worker, args=(niche, is_free_tier), daemon=True)
+
+def trigger_replenish(niche: str) -> None:
+    t = threading.Thread(target=prebake_clip_worker, args=(niche,), daemon=True)
     t.start()
-

@@ -1,20 +1,43 @@
 """
 video_downloader.py
-Downloads a YouTube video and its auto-generated subtitles using yt-dlp Python API.
-Uses system ffmpeg on Linux (Render) and falls back to imageio_ffmpeg on Windows.
-"""
-import yt_dlp
-import os
-import glob
-import sys
+Downloads a video + auto-captions for the two supported modes.
 
+- own_content / uploaded file: nothing to download — handled by the
+  caller via video_finder.register_uploaded_file().
+- own_content / user's own channel, and licensed_cc: a single
+  straightforward yt-dlp call, no client-fingerprint rotation and no
+  proxy routing. Neither mode needs to evade bot-detection.
+"""
+from __future__ import annotations
+
+import glob
+import os
+import sys
+from dataclasses import dataclass
 from pathlib import Path
-DOWNLOAD_DIR = os.path.join(str(Path.home() / ".clipai"), "downloaded_videos")
+from typing import Optional
+
+import yt_dlp
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+from config import settings
+from logging_setup import get_logger
+
+log = get_logger("video_downloader")
+
+
+class DownloadError(Exception):
+    """Raised when a video/subtitle download fails after retries."""
+
+
+@dataclass
+class DownloadResult:
+    video_path: str
+    sub_path: Optional[str] = None
 
 
 def _get_ffmpeg_exe() -> str:
-    """Auto-detect ffmpeg exe: bundled on Windows, system on Linux."""
-    if getattr(sys, 'frozen', False):
+    if getattr(sys, "frozen", False):
         return os.path.join(sys._MEIPASS, "bin", "ffmpeg.exe")
     if sys.platform == "win32":
         try:
@@ -22,64 +45,50 @@ def _get_ffmpeg_exe() -> str:
             return imageio_ffmpeg.get_ffmpeg_exe()
         except Exception:
             return "ffmpeg"
-    else:
-        return "/usr/bin/ffmpeg"
+    return "/usr/bin/ffmpeg"
 
 
-def _write_cookies_file() -> str:
-    """Return path to a YouTube cookies file for yt-dlp to use.
-    Checks (in order):
-      1. YOUTUBE_COOKIES_FILE — direct path to an existing file on disk
-      2. YOUTUBE_COOKIES — raw Netscape cookie content in env var
+class _TransientDownloadError(Exception):
+    """Wraps yt-dlp failures so tenacity knows they're worth retrying."""
+
+
+@retry(stop=stop_after_attempt(settings.max_retries), wait=wait_exponential(multiplier=1, min=2, max=10),
+       retry=retry_if_exception_type(_TransientDownloadError), reraise=True)
+def _run_ytdlp(ydl_opts: dict, url: str) -> None:
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+    except yt_dlp.utils.DownloadError as e:
+        # Treat as transient (network blip, temporary rate limit) and let
+        # tenacity retry a bounded number of times before giving up.
+        raise _TransientDownloadError(str(e)) from e
+
+
+def download_video_and_subs(url: str, video_id: str, start_sec: Optional[int] = None,
+                             end_sec: Optional[int] = None) -> DownloadResult:
     """
-    # 1. Direct file path (preferred — set on Oracle VM via systemd)
-    cookies_file_path = os.environ.get("YOUTUBE_COOKIES_FILE", "")
-    if cookies_file_path and os.path.exists(cookies_file_path):
-        print(f"[Downloader] Using YouTube cookies file: {cookies_file_path}")
-        return cookies_file_path
-
-    # 2. Raw cookie content in env var (Render / cloud dashboard fallback)
-    cookies_content = os.environ.get("YOUTUBE_COOKIES", "")
-    if not cookies_content:
-        return ""
-    cookies_content = cookies_content.replace("\\n", "\n").replace("\\t", "\t")
-    cookies_path = "/tmp/youtube_cookies.txt" if sys.platform != "win32" else os.path.join(os.environ.get("TEMP", "."), "youtube_cookies.txt")
-    with open(cookies_path, "w", encoding="utf-8") as f:
-        f.write(cookies_content)
-    print("[Downloader] Using YouTube cookies from environment variable.")
-    return cookies_path
-
-
-def download_video_and_subs(url: str, video_id: str, start_sec: int = None, end_sec: int = None) -> dict:
+    Downloads the video at 720p and its auto-generated subtitles via a
+    single standard yt-dlp client — no cookies, no proxy, no client
+    rotation. Retries a bounded number of times on transient failures;
+    raises DownloadError if it never succeeds.
     """
-    Downloads the video at 720p and its auto-generated subtitles.
-    If start_sec and end_sec are provided, only downloads that exact slice (Opus Clip style).
-    Returns paths to the video file and subtitle file.
-    """
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    existing_mp4 = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp4")
-    existing_subs = glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}*.vtt"))
-    if os.path.exists(existing_mp4) and os.path.getsize(existing_mp4) > 102400:
-        print(f"[Downloader] Using existing cached video: {existing_mp4}")
-        return {
-            "video_path": existing_mp4,
-            "sub_path": existing_subs[0] if existing_subs else None
-        }
+    settings.download_dir.mkdir(parents=True, exist_ok=True)
+    existing_mp4 = settings.download_dir / f"{video_id}.mp4"
+    existing_subs = glob.glob(str(settings.download_dir / f"{video_id}*.vtt"))
 
-    output_template = os.path.join(DOWNLOAD_DIR, f"{video_id}.%(ext)s")
+    if existing_mp4.exists() and existing_mp4.stat().st_size > 102_400:
+        log.info("Using cached video: %s", existing_mp4)
+        return DownloadResult(video_path=str(existing_mp4), sub_path=existing_subs[0] if existing_subs else None)
+
+    output_template = str(settings.download_dir / f"{video_id}.%(ext)s")
     ffmpeg_exe = _get_ffmpeg_exe()
-    cookies_file = _write_cookies_file()
-
-    print(f"[Downloader] Downloading video: {url}")
-    print(f"[Downloader] Using ffmpeg: {ffmpeg_exe}")
-
-    # Add ffmpeg directory to PATH so yt-dlp's download_ranges can find it
     ffmpeg_dir = os.path.dirname(ffmpeg_exe)
     if ffmpeg_dir and ffmpeg_dir not in os.environ.get("PATH", ""):
         os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
 
+    log.info("Downloading video: %s", url)
+
     ydl_opts = {
-        # Light, reliable 720p/480p single-stream format selection
         "format": "best[height<=720][ext=mp4]/bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]/best",
         "outtmpl": output_template,
         "writeautomaticsub": True,
@@ -89,98 +98,29 @@ def download_video_and_subs(url: str, video_id: str, start_sec: int = None, end_
         "no_warnings": True,
         "noplaylist": True,
         "merge_output_format": "mp4",
-        "retries": 10,
-        "fragment_retries": 10,
-        "skip_unavailable_fragments": False,
+        "retries": 5,
+        "fragment_retries": 5,
         "nocheckcertificate": True,
         "ffmpeg_location": ffmpeg_exe,
-        # Android client has the highest success rate and lowest bot challenges across cloud subnets
-        "extractor_args": {"youtube": {"player_client": ["android", "ios", "mweb", "tv"]}},
     }
-
-    # Range Slicing Optimization: Fetch ONLY the required seconds if known (saves 95% bandwidth)
     if start_sec is not None and end_sec is not None:
-        ydl_opts["download_ranges"] = lambda info, ydl: [{'start_time': start_sec, 'end_time': end_sec}]
-        print(f"[Downloader] Range-slicing active: Downloading only {start_sec}s -> {end_sec}s")
-
-    # Support residential proxy or local SOCKS5 reverse-tunnel
-    proxy_url = os.environ.get("YOUTUBE_PROXY") or os.environ.get("ALL_PROXY")
-    if not proxy_url:
-        # Check if local reverse tunnel SOCKS5 port 1080 is active
-        import socket
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(0.5)
-        if s.connect_ex(('127.0.0.1', 1080)) == 0:
-            proxy_url = "socks5h://127.0.0.1:1080"
-            print("[Downloader] Detected active reverse-tunnel proxy on port 1080.")
-        s.close()
-
-    if proxy_url:
-        ydl_opts["proxy"] = proxy_url
-        print(f"[Downloader] Routing download through proxy: {proxy_url}")
-
-    if cookies_file:
-        ydl_opts["cookiefile"] = cookies_file
+        ydl_opts["download_ranges"] = lambda info, ydl: [{"start_time": start_sec, "end_time": end_sec}]
+        log.info("Range-slicing active: %ss -> %ss", start_sec, end_sec)
 
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+        _run_ytdlp(ydl_opts, url)
     except Exception as e:
-        print(f"[Downloader] Download error: {e}")
-        return {"error": str(e)}
+        raise DownloadError(f"Download failed after retries: {e}") from e
 
-    # Find downloaded files — check mp4 first, then any video file
-    video_files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}.mp4"))
+    video_files = glob.glob(str(settings.download_dir / f"{video_id}.mp4"))
     if not video_files:
-        all_files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}.*"))
-        video_files = [f for f in all_files if not any(f.endswith(ext) for ext in ['.vtt', '.json', '.srt', '.ytdl'])]
-
-    sub_files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}*.vtt"))
+        all_files = glob.glob(str(settings.download_dir / f"{video_id}.*"))
+        video_files = [f for f in all_files if not any(f.endswith(ext) for ext in (".vtt", ".json", ".srt", ".ytdl"))]
+    sub_files = glob.glob(str(settings.download_dir / f"{video_id}*.vtt"))
 
     if not video_files:
-        print("[Downloader] Video file not found after download.")
-        return {"error": "Video file not found after download"}
+        raise DownloadError("Video file not found after download completed without error.")
 
-    result = {"video_path": video_files[0]}
-    if sub_files:
-        result["sub_path"] = sub_files[0]
-        print(f"[Downloader] Subtitles: {sub_files[0]}")
-    else:
-        result["sub_path"] = None
-        print("[Downloader] No subtitles found.")
-
-    print(f"[Downloader] Done: {result['video_path']}")
+    result = DownloadResult(video_path=video_files[0], sub_path=sub_files[0] if sub_files else None)
+    log.info("Download complete: %s", result.video_path)
     return result
-
-def get_broll_video() -> str:
-    """
-    Downloads and caches a default 'satisfying' B-Roll video (e.g. GTA V or Minecraft parkour).
-    Returns the path to the cached mp4.
-    """
-    broll_dir = os.path.join(str(Path.home() / ".clipai"), "broll")
-    os.makedirs(broll_dir, exist_ok=True)
-    broll_path = os.path.join(broll_dir, "gta_broll.mp4")
-    
-    if os.path.exists(broll_path):
-        return broll_path
-
-    # Fallback to a well known satisfying gameplay video on YouTube (no copyright, standard parkour)
-    broll_url = "https://www.youtube.com/watch?v=n_Dv4JMmAWE" # Example GTA V car jumping
-    print("[Downloader] Caching B-Roll video for split-screen mode...")
-    
-    ydl_opts = {
-        "format": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        "outtmpl": broll_path,
-        "quiet": True,
-        "no_warnings": True,
-        "ffmpeg_location": _get_ffmpeg_exe()
-    }
-    
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([broll_url])
-        return broll_path
-    except Exception as e:
-        print(f"[Downloader] Failed to cache B-roll: {e}")
-        return ""
-

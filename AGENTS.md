@@ -1,5 +1,6 @@
-﻿# Operational Guidelines & Rules: Direct Action & Minimal Analysis
+﻿# Operational Guidelines: Maximum Model Quota Efficiency & Direct Action
 
-1. **Zero Redundant Analysis**: Never inspect the same file, directory, or endpoint repeatedly across consecutive turns without an intervening action or code change.
-2. **Immediate Action Bias**: Once a symptom or bug is identified (e.g., UI display issue, missing video, link error, storage leak), go directly to editing the root-cause file and validating it immediately.
-3. **Quota Conservation**: Avoid issuing chains of speculative diagnostic reads. Perform the smallest necessary lookup, apply the surgical edit, verify, and complete the turn.
+1. **Zero Redundant Analysis**: Never re-read or inspect the same file, log, or endpoint multiple times. Use the context already acquired.
+2. **Immediate Action Bias**: Go directly to the root-cause file, apply surgical edits, test, and finish. Do not loop in exploratory diagnostics.
+3. **Strict Quota Economy**: Keep tool calls to the absolute minimum necessary per task. Avoid multi-step exploratory queries when a targeted edit can be made immediately.
+4. **Concise Communication**: Provide punchy, direct summaries without repeating unchanged code or verbose explanations.

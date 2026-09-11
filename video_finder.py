@@ -1,302 +1,266 @@
 """
 video_finder.py
-Searches YouTube Data API v3 for trending videos matching a niche/creator query.
-Falls back to yt-dlp search if API key not available.
+Two supported modes for sourcing a source video:
+
+  1. "own_content"  — the user supplies their own file, or a video from
+                       their own authenticated YouTube channel.
+  2. "licensed_cc"  — search YouTube Data API v3 for Creative Commons
+                       licensed videos. Requires YOUTUBE_API_KEY.
+
+No scraping, no client-fingerprint rotation, no proxy evasion. If the
+official API can't find something, the run fails loudly rather than
+falling back to unlicensed scraping.
 """
-import os
+from __future__ import annotations
+
 import json
-import random
-import httpx
+import re
+from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Optional
 
-os.makedirs(str(Path.home() / ".clipai"), exist_ok=True)
+import httpx
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-USED_VIDEOS_FILE = os.path.join(str(Path.home() / ".clipai"), "used_videos.json")
-MIN_VIEWS = 50_000
-MIN_DURATION_SEC = 300   # 5 minutes
-MAX_AGE_DAYS = 730
-TOP_N = 3
+from config import settings
+from logging_setup import get_logger
 
-# Automated Content ID blacklist: major entertainment conglomerates, TV shows, and copyrighted broadcasts
-COPYRIGHT_BLACKLIST = [
-    "nbc", "universal", "snl", "saturday night live", "the voice", "jimmy fallon", "tonight show",
-    "paramount", "warner", "disney", "marvel", "netflix", "hbo", "sony pictures", "fox entertainment",
-    "cbs", "abc", "espn", "ufc", "premier league", "champions league", "nba", "fifa", "wwe",
-    "movie clip", "full movie", "tv show", "trailer", "official soundtrack", "vevo"
-]
-
-def is_copyright_risk(title: str, channel_title: str = "") -> bool:
-    """Checks if a title or channel is associated with high-risk major media studio Content ID claims."""
-    combined = f"{title} {channel_title}".lower()
-    for word in COPYRIGHT_BLACKLIST:
-        if word in combined:
-            return True
-    return False
-
-YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
+log = get_logger("video_finder")
 
 
-def _safe(text: str) -> str:
-    return text.encode("ascii", errors="replace").decode("ascii")
+class VideoFinderError(Exception):
+    """Raised when a source video cannot be found/resolved."""
 
 
-def log(msg: str):
-    print(_safe(str(msg)))
+@dataclass
+class VideoCandidate:
+    id: str
+    title: str
+    url: Optional[str] = None
+    local_path: Optional[str] = None
+    duration: int = 0
+    view_count: int = 0
+    channel: str = ""
+    license: str = ""
+    attribution: str = ""
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+# ── Used-video tracking (Redis w/ JSON fallback) ─────────────────────
+USED_VIDEOS_REDIS_KEY = "viralclip:used_videos"
+_redis_used_client = None
+
+
+def _get_used_redis():
+    global _redis_used_client
+    if _redis_used_client is None:
+        try:
+            import redis as _rl
+            c = _rl.Redis.from_url(settings.redis_url, decode_responses=True, socket_connect_timeout=2)
+            c.ping()
+            _redis_used_client = c
+        except Exception as e:
+            log.debug("Redis unavailable, falling back to JSON file: %s", e)
+            _redis_used_client = False
+    return _redis_used_client if _redis_used_client else None
 
 
 def load_used_videos() -> dict:
-    if os.path.exists(USED_VIDEOS_FILE):
+    r = _get_used_redis()
+    if r:
         try:
-            with open(USED_VIDEOS_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
+            return {vid: {} for vid in r.smembers(USED_VIDEOS_REDIS_KEY)}
+        except Exception as e:
+            log.warning("Redis read failed, falling back to JSON: %s", e)
+    if settings.used_videos_file.exists():
+        try:
+            return json.loads(settings.used_videos_file.read_text())
+        except Exception as e:
+            log.warning("Failed to parse used_videos.json: %s", e)
             return {}
     return {}
 
 
-def mark_video_used(video_id: str, title: str):
+def mark_video_used(video_id: str, title: str = "") -> None:
+    r = _get_used_redis()
+    if r:
+        try:
+            r.sadd(USED_VIDEOS_REDIS_KEY, video_id)
+            log.info("Marked used (Redis): %s", video_id)
+            return
+        except Exception as e:
+            log.warning("Redis write failed, falling back to JSON: %s", e)
     used = load_used_videos()
     used[video_id] = {"title": title, "used_at": datetime.now().isoformat()}
-    with open(USED_VIDEOS_FILE, "w") as f:
-        json.dump(used, f, indent=2)
-    log(f"[VideoFinder] Marked as used: {video_id} -- '{_safe(title)[:50]}'")
+    settings.used_videos_file.write_text(json.dumps(used, indent=2))
+    log.info("Marked used (JSON fallback): %s", video_id)
 
 
 def _iso8601_to_seconds(duration: str) -> int:
-    """Convert YouTube ISO 8601 duration (PT4M13S) to seconds."""
-    import re
+    """Convert YouTube ISO 8601 duration (e.g. 'PT4M13S') to seconds."""
     pattern = re.compile(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?')
-    match = pattern.match(duration)
+    match = pattern.match(duration or "")
     if not match:
         return 0
-    hours = int(match.group(1) or 0)
-    minutes = int(match.group(2) or 0)
-    seconds = int(match.group(3) or 0)
+    hours, minutes, seconds = (int(g or 0) for g in match.groups())
     return hours * 3600 + minutes * 60 + seconds
 
 
-def _search_via_api(niche: str, max_results: int = 20) -> list:
-    """Use YouTube Data API v3 — never gets blocked."""
+_RETRYABLE = (httpx.TransportError, httpx.TimeoutException)
+
+
+@retry(stop=stop_after_attempt(settings.max_retries), wait=wait_exponential(multiplier=1, min=1, max=8),
+       retry=retry_if_exception_type(_RETRYABLE), reraise=True)
+def _http_get(url: str, params: dict) -> dict:
+    res = httpx.get(url, params=params, timeout=settings.http_timeout_sec)
+    res.raise_for_status()
+    return res.json()
+
+
+# ── Mode 2: licensed_cc ───────────────────────────────────────────────
+def find_licensed_cc_videos(niche: str, max_results: int = 20) -> list[VideoCandidate]:
+    """
+    Search YouTube Data API v3, restricted to Creative Commons licensed
+    videos only. This is the sole sourcing path for licensed_cc mode —
+    there is intentionally no scraping fallback.
+
+    Raises VideoFinderError if the API key is missing, the request
+    fails after retries, or no qualifying candidates are found.
+    """
+    if not settings.youtube_api_key:
+        raise VideoFinderError("YOUTUBE_API_KEY is required for licensed_cc mode.")
+
     used = load_used_videos()
-    log(f"[VideoFinder] Searching YouTube API for: '{niche}'")
+    log.info("Searching YouTube API (CC-licensed only) for: %r", niche)
 
-    cutoff = (datetime.now() - timedelta(days=MAX_AGE_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cutoff = (datetime.now() - timedelta(days=settings.max_age_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Step 1: Search for videos
-    search_url = "https://www.googleapis.com/youtube/v3/search"
-    params = {
+    search_params = {
         "part": "id,snippet",
         "q": niche,
         "type": "video",
         "order": "viewCount",
-        "videoDuration": "medium",  # 4–20 min videos
+        "videoDuration": "medium",
         "publishedAfter": cutoff,
         "maxResults": max_results,
-        "key": YOUTUBE_API_KEY,
+        "videoLicense": "creativeCommon",
+        "key": settings.youtube_api_key,
     }
-
     try:
-        res = httpx.get(search_url, params=params, timeout=20)
-        data = res.json()
+        data = _http_get("https://www.googleapis.com/youtube/v3/search", search_params)
     except Exception as e:
-        raise Exception(f"YouTube API request failed: {e}")
+        raise VideoFinderError(f"YouTube API search request failed: {e}") from e
 
     if "error" in data:
-        raise Exception(f"YouTube API error: {data['error'].get('message', str(data['error']))}")
+        raise VideoFinderError(f"YouTube API error: {data['error'].get('message', data['error'])}")
 
     items = data.get("items", [])
-    if not items:
-        return []
-
     video_ids = [item["id"]["videoId"] for item in items if item.get("id", {}).get("videoId")]
     if not video_ids:
-        return []
+        raise VideoFinderError(f"No CC-licensed videos found for '{niche}'. Try a different search term.")
 
-    # Step 2: Get video details (duration, view count)
-    details_url = "https://www.googleapis.com/youtube/v3/videos"
     detail_params = {
-        "part": "contentDetails,statistics,snippet",
+        "part": "contentDetails,statistics,snippet,status",
         "id": ",".join(video_ids),
-        "key": YOUTUBE_API_KEY,
+        "key": settings.youtube_api_key,
     }
-
     try:
-        detail_res = httpx.get(details_url, params=detail_params, timeout=20)
-        detail_data = detail_res.json()
+        detail_data = _http_get("https://www.googleapis.com/youtube/v3/videos", detail_params)
     except Exception as e:
-        raise Exception(f"YouTube API detail request failed: {e}")
+        raise VideoFinderError(f"YouTube API detail request failed: {e}") from e
 
-    candidates = []
+    candidates: list[VideoCandidate] = []
     for item in detail_data.get("items", []):
         vid_id = item["id"]
         if vid_id in used:
-            log(f"  [SKIP] Already used: {vid_id}")
             continue
 
-        duration_str = item.get("contentDetails", {}).get("duration", "PT0S")
-        duration_sec = _iso8601_to_seconds(duration_str)
+        # Re-verify license server-side — don't trust the search filter alone
+        license_str = item.get("status", {}).get("license", "")
+        if license_str != "creativeCommon":
+            log.debug("Skip (not CC on re-check): %s", vid_id)
+            continue
+
+        duration_sec = _iso8601_to_seconds(item.get("contentDetails", {}).get("duration", "PT0S"))
         view_count = int(item.get("statistics", {}).get("viewCount", 0))
-        title = _safe(item.get("snippet", {}).get("title", ""))[:60]
+        title = item.get("snippet", {}).get("title", "")[:60]
+        channel_name = item.get("snippet", {}).get("channelTitle", "Unknown")
 
-        channel_title = _safe(item.get("snippet", {}).get("channelTitle", ""))
-        if is_copyright_risk(title, channel_title):
-            log(f"  [SKIP] Copyright Risk (Content ID flagged studio): {title} ({channel_title})")
+        if duration_sec < settings.min_duration_sec or view_count < settings.min_views:
             continue
 
-        if duration_sec < MIN_DURATION_SEC:
-            log(f"  [SKIP] Too short ({duration_sec//60}min): {title}")
-            continue
-        if view_count < MIN_VIEWS:
-            log(f"  [SKIP] Too few views ({view_count:,}): {title}")
-            continue
+        candidates.append(VideoCandidate(
+            id=vid_id,
+            title=title,
+            url=f"https://www.youtube.com/watch?v={vid_id}",
+            duration=duration_sec,
+            view_count=view_count,
+            channel=channel_name,
+            license="creativeCommon",
+            attribution=f"Original by {channel_name} (CC BY) https://youtu.be/{vid_id}",
+        ))
+        log.info("Candidate OK: %r | %s views | %sm | CC BY %s", title, f"{view_count:,}", duration_sec // 60, channel_name)
 
-        candidates.append({
-            "url": f"https://www.youtube.com/watch?v={vid_id}",
-            "title": title,
-            "duration": duration_sec,
-            "view_count": view_count,
-            "id": vid_id,
-        })
-        log(f"  [OK] {title} | {view_count:,} views | {duration_sec//60}min")
-
-    return candidates
-
-
-def _search_via_ytdlp(niche: str, max_results: int = 15) -> list:
-    """Fallback: use yt-dlp with client rotation (ios, android, tv, mweb)."""
-    import yt_dlp
-    used = load_used_videos()
-
-    SEARCH_SUFFIXES = ["highlights", "best moments", "funny moments", "viral", "trending", ""]
-    suffix = random.choice(SEARCH_SUFFIXES)
-    query = f"{niche} {suffix}".strip()
-    search_query = f"ytsearch{max_results}:{query}"
-    log(f"[VideoFinder] yt-dlp fallback search: '{query}'")
-
-    # Rotate client extractors to bypass cloud IP bot blocks
-    client_profiles = [
-        ["ios"],
-        ["android"],
-        ["mweb"],
-        ["tv"],
-        ["web_creator"]
-    ]
-
-    candidates = []
-    last_error = None
-
-    # Support residential proxy or local SOCKS5 reverse-tunnel
-    proxy_url = os.environ.get("YOUTUBE_PROXY") or os.environ.get("ALL_PROXY")
-    if not proxy_url:
-        import socket
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(0.5)
-        if s.connect_ex(('127.0.0.1', 1080)) == 0:
-            proxy_url = "socks5h://127.0.0.1:1080"
-        s.close()
-
-    for client_profile in client_profiles:
-        ydl_opts = {
-            "quiet": True, 
-            "no_warnings": True, 
-            "noplaylist": True, 
-            "skip_download": True,
-            "ignoreerrors": True,
-            "extractor_args": {"youtube": {"player_client": client_profile}},
-        }
-        if proxy_url:
-            ydl_opts["proxy"] = proxy_url
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(search_query, download=False)
-                entries = info.get("entries", []) if info else []
-                for entry in entries:
-                    if not entry:
-                        continue
-                    vid_id = entry.get("id") or ""
-                    duration = entry.get("duration") or 0
-                    view_count = entry.get("view_count") or 0
-                    title = _safe(entry.get("title", ""))[:60]
-
-                    uploader = _safe(entry.get("uploader", ""))
-                    if is_copyright_risk(title, uploader):
-                        continue
-
-                    if vid_id in used:
-                        continue
-                    if duration < MIN_DURATION_SEC or view_count < MIN_VIEWS:
-                        continue
-
-                    candidates.append({
-                        "url": entry.get("webpage_url") or f"https://www.youtube.com/watch?v={vid_id}",
-                        "title": title,
-                        "duration": duration,
-                        "view_count": view_count,
-                        "id": vid_id,
-                    })
-            if candidates:
-                log(f"[VideoFinder] Successfully retrieved {len(candidates)} candidates via client profile: {client_profile}")
-                break
-        except Exception as e:
-            last_error = str(e)
-            log(f"[VideoFinder] yt-dlp error with client {client_profile}: {e}")
-
-    if not candidates and last_error:
-        raise Exception(f"yt-dlp search failed: {last_error}")
-
-    return candidates
-
-
-def find_viral_video(niche: str = "finance", max_results: int = 15) -> dict:
-    candidates = find_viral_videos(niche, max_results)
-    return candidates[0] if candidates else {}
-
-
-def find_viral_videos(niche: str = "finance", max_results: int = 15) -> list:
-    # ── 0. Handle Direct YouTube URL Input ───────────────────
-    trimmed = niche.strip()
-    if "youtube.com/watch" in trimmed or "youtu.be/" in trimmed or "youtube.com/shorts/" in trimmed:
-        import yt_dlp
-        log(f"[VideoFinder] Direct YouTube URL detected: {trimmed}")
-        try:
-            with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True}) as ydl:
-                info = ydl.extract_info(trimmed, download=False)
-                if info:
-                    vid_id = info.get("id") or "direct_vid"
-                    title = _safe(info.get("title", "Custom YouTube Video"))[:60]
-                    duration = info.get("duration") or 300
-                    view_count = info.get("view_count") or 100000
-                    return [{
-                        "url": trimmed,
-                        "title": title,
-                        "duration": duration,
-                        "view_count": view_count,
-                        "id": vid_id
-                    }]
-        except Exception as e:
-            log(f"[VideoFinder] Failed to inspect direct URL: {e}")
-
-    candidates = []
-
-    # Prefer YouTube Data API (never gets blocked)
-    if YOUTUBE_API_KEY:
-        try:
-            candidates = _search_via_api(niche, max_results)
-        except Exception as e:
-            log(f"[VideoFinder] API search failed, trying yt-dlp: {e}")
-
-    # Fallback to yt-dlp
-    if not candidates:
-        candidates = _search_via_ytdlp(niche, max_results)
-
-    if not candidates:
-        raise Exception(f"No videos found for '{niche}'. Try a different search term.")
-
-    # Sort by views descending
-    candidates.sort(key=lambda x: x["view_count"], reverse=True)
-    top = candidates[:TOP_N]
-    for i, c in enumerate(top):
-        log(f"[VideoFinder] Candidate {i+1}: '{c['title']}' ({c['view_count']:,} views | {c['duration']//60}min)")
-
+    candidates.sort(key=lambda c: c.view_count, reverse=True)
+    top = candidates[: settings.top_n_candidates]
+    if not top:
+        raise VideoFinderError(f"No qualifying CC-licensed videos found for '{niche}' after filtering.")
     return top
+
+
+# ── Mode 1: own_content ────────────────────────────────────────────────
+def get_own_channel_videos(creds_dict: dict, max_results: int = 10) -> list[VideoCandidate]:
+    """
+    Lists videos from the *authenticated user's own* YouTube channel via
+    the Data API (uploads playlist). Requires an OAuth token with at
+    least youtube.readonly scope.
+    """
+    from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import Request
+    from googleapiclient.discovery import build
+
+    creds = Credentials(
+        token=creds_dict.get("token"),
+        refresh_token=creds_dict.get("refresh_token"),
+        client_id=creds_dict.get("client_id"),
+        client_secret=creds_dict.get("client_secret"),
+        token_uri="https://oauth2.googleapis.com/token",
+    )
+    if creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+
+    youtube = build("youtube", "v3", credentials=creds)
+
+    ch = youtube.channels().list(part="contentDetails", mine=True).execute()
+    items = ch.get("items", [])
+    if not items:
+        raise VideoFinderError("Could not resolve the authenticated user's channel.")
+    uploads_playlist_id = items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
+
+    pl = youtube.playlistItems().list(
+        part="snippet,contentDetails", playlistId=uploads_playlist_id, maxResults=max_results,
+    ).execute()
+
+    results = []
+    for it in pl.get("items", []):
+        vid_id = it["contentDetails"]["videoId"]
+        results.append(VideoCandidate(
+            id=vid_id,
+            title=it["snippet"]["title"][:60],
+            url=f"https://www.youtube.com/watch?v={vid_id}",
+        ))
+    return results
+
+
+def register_uploaded_file(file_path: str, title: str = "Uploaded video") -> VideoCandidate:
+    """
+    own_content mode, file-upload path: the user already gave us the
+    file directly. No search or download step needed.
+    """
+    p = Path(file_path)
+    if not p.exists():
+        raise VideoFinderError(f"Uploaded file not found: {file_path}")
+    return VideoCandidate(id=p.stem, title=title[:60], local_path=str(p))
