@@ -539,10 +539,11 @@ async function loadAutoPost() {
     if (!res.ok) return;
     const cfg = await res.json();
     const enabledEl = document.getElementById('ap-enabled');
-    const nicheEl = document.getElementById('ap-niche');
+    const rightsEl = document.getElementById('ap-rights-check');
 
     if (enabledEl) enabledEl.checked = Boolean(cfg.enabled);
     if (nicheEl) nicheEl.value = cfg.niche || 'motivation';
+    if (rightsEl) rightsEl.checked = Boolean(cfg.rights_confirmed);
 
     const tList = document.getElementById('times-list');
     if (tList) {
@@ -586,14 +587,23 @@ async function saveAutoPost() {
   const niche = (document.getElementById('ap-niche')?.value || 'motivation').trim();
   const times = Array.from(document.querySelectorAll('#times-list input[type=time]')).map(i => i.value).filter(Boolean);
   const days = Array.from(document.querySelectorAll('#ap-days input:checked')).map(i => i.value);
+  const rights_confirmed = Boolean(document.getElementById('ap-rights-check')?.checked);
+
+  if (enabled && !rights_confirmed) {
+    showToast('Please confirm attribution acknowledgment to enable auto-post', 'error');
+    return;
+  }
 
   try {
     const res = await fetch('/api/v1/auto-post/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled, niche, times: times.length ? times : ["12:00"], days })
+      body: JSON.stringify({ enabled, niche, times: times.length ? times : ["12:00"], days, rights_confirmed })
     });
-    if (!res.ok) throw new Error('Save failed');
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.detail || 'Save failed');
+    }
     showToast('Auto-post schedule saved!', 'live');
   } catch (err) {
     showToast(err.message, 'error');

@@ -56,9 +56,15 @@ async def _trigger_autopost_jobs() -> None:
             if current_day not in days or current_time not in times:
                 continue
             niche = data.get("niche", "motivation")
+            rights_confirmed = data.get("rights_confirmed") == "True"
+            if not rights_confirmed:
+                log.warning("Skipping auto-post for user %s: rights_confirmed is False", user_id)
+                continue
+
             await job_queue.enqueue({
                 "mode": "licensed_cc", "niche": niche, "user_id": user_id,
                 "is_auto_post": True, "auto_upload": True,
+                "rights_confirmed": True,
             })
             log.info("Auto-post job queued for user %s (niche=%r)", user_id, niche)
     except Exception as e:

@@ -30,7 +30,7 @@ from ..db import UserRepo
 from ..logging_conf import get_logger
 from ..redis_client import get_redis
 from fastapi import Depends
-from ..security import SESSION_COOKIE, SESSION_TTL_SEC, issue_session_token, require_user, optional_user, stable_user_id_for_email
+from ..security import SESSION_COOKIE, SESSION_TTL_SEC, issue_session_token, require_user, optional_user
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 log = get_logger("auth")

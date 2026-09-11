@@ -9,8 +9,9 @@
 # WORKER_SECRET & ADMIN_SECRET rotation support (worker_secret_previous, admin_secret_previous)
 # Atomic free-tier quota gate with fail-closed semantics & enqueue refund
 # Strict CSP without 'unsafe-inline' and zero inline style attributes in frontend markup
+# Autopost scheduling gated on affirmative rights confirmation and threaded into worker queue
 # WorkerSettings multi-tier Redis configuration for used video deduplication
-# All 51 automated test suites passing across all packages
+# All 52 automated test suites passing across all packages
 # Modern Editor-Console UI with timeline timecode ruler, refined type, and micro-interactions
 # ==============================================================================
 
@@ -762,6 +763,7 @@ class AutoPostSettings(BaseModel):
     times: List[str] = Field(default_factory=lambda: ["12:00"])
     niche: str = "motivation"
     days: List[str] = Field(default_factory=lambda: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
+    rights_confirmed: bool = False  # Required when enabling auto-post for CC/public domain
 
     @field_validator("times")
     @classmethod
@@ -771,6 +773,15 @@ class AutoPostSettings(BaseModel):
             if not time_pattern.match(t):
                 raise ValueError(f"Invalid time format: {t}. Expected HH:MM in 24h format")
         return times
+
+    @model_validator(mode="after")
+    def validate_rights_confirmed_if_enabled(self) -> "AutoPostSettings":
+        if self.enabled and not self.rights_confirmed:
+            raise ValueError(
+                "rights_confirmed must be true when enabling auto-post — "
+                "the user must explicitly acknowledge attribution for scheduled runs."
+            )
+        return self
 
 
 class UserProfileOut(BaseModel):
@@ -1159,9 +1170,15 @@ async def _trigger_autopost_jobs() -> None:
             if current_day not in days or current_time not in times:
                 continue
             niche = data.get("niche", "motivation")
+            rights_confirmed = data.get("rights_confirmed") == "True"
+            if not rights_confirmed:
+                log.warning("Skipping auto-post for user %s: rights_confirmed is False", user_id)
+                continue
+
             await job_queue.enqueue({
                 "mode": "licensed_cc", "niche": niche, "user_id": user_id,
                 "is_auto_post": True, "auto_upload": True,
+                "rights_confirmed": True,
             })
             log.info("Auto-post job queued for user %s (niche=%r)", user_id, niche)
     except Exception as e:
@@ -1247,7 +1264,7 @@ from ..db import UserRepo
 from ..logging_conf import get_logger
 from ..redis_client import get_redis
 from fastapi import Depends
-from ..security import SESSION_COOKIE, SESSION_TTL_SEC, issue_session_token, require_user, optional_user, stable_user_id_for_email
+from ..security import SESSION_COOKIE, SESSION_TTL_SEC, issue_session_token, require_user, optional_user
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 log = get_logger("auth")
@@ -1545,13 +1562,13 @@ def _is_live_youtube_url(url: str) -> bool:
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException
 
 from ..config import get_settings
 from ..db import ClipRepo, UserRepo
 from ..logging_conf import get_logger
 from ..schemas import AnalyzeRequest, JobCompletePayload, ProgressPayload
-from ..security import verify_admin, verify_worker_token
+from ..security import verify_worker_token
 from ..services import job_queue
 
 
@@ -1825,7 +1842,7 @@ async def get_profile(user_id: str = Depends(require_user)):
 async def get_auto_post_settings(user_id: str = Depends(require_user)):
     r = get_redis()
     default = {"enabled": False, "times": ["12:00"], "niche": "motivation",
-               "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]}
+               "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], "rights_confirmed": False}
     if not r:
         return default
     import json
@@ -1837,6 +1854,7 @@ async def get_auto_post_settings(user_id: str = Depends(require_user)):
         "times": json.loads(data.get("times", '["12:00"]')),
         "niche": data.get("niche", "motivation"),
         "days": json.loads(data.get("days", '["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]')),
+        "rights_confirmed": data.get("rights_confirmed") == "True",
     }
 
 
@@ -1850,6 +1868,7 @@ async def save_auto_post_settings(payload: AutoPostSettings, user_id: str = Depe
             "times": json.dumps(payload.times),
             "niche": payload.niche,
             "days": json.dumps(payload.days),
+            "rights_confirmed": str(payload.rights_confirmed),
         })
         if payload.enabled:
             await r.sadd("autopost:enabled", user_id)
@@ -3665,12 +3684,21 @@ def test_clip_request_requires_source_video_id_for_channel_modes():
 
 def test_autopost_rejects_bad_time_format():
     with pytest.raises(ValidationError):
-        AutoPostSettings(enabled=True, times=["25:99"], niche="x")
+        AutoPostSettings(enabled=True, times=["25:99"], niche="x", rights_confirmed=True)
 
 
 def test_autopost_accepts_valid_times():
-    settings = AutoPostSettings(enabled=True, times=["09:30", "23:00"], niche="x")
+    settings = AutoPostSettings(enabled=True, times=["09:30", "23:00"], niche="x", rights_confirmed=True)
     assert settings.times == ["09:30", "23:00"]
+    assert settings.rights_confirmed is True
+
+
+def test_autopost_requires_rights_confirmed_when_enabled():
+    with pytest.raises(ValidationError):
+        AutoPostSettings(enabled=True, niche="x", rights_confirmed=False)
+    # Disabled autopost can have rights_confirmed=False
+    disabled = AutoPostSettings(enabled=False, niche="x", rights_confirmed=False)
+    assert disabled.enabled is False
 
 
 ################################################################################
@@ -4176,6 +4204,10 @@ def test_valid_own_content_file_job_has_no_source_kind_problem():
           <div class="form-block">
             <label class="field-label">Days</label>
             <div class="days" id="ap-days"></div>
+          </div>
+          <div class="rights-row mb-4">
+            <input type="checkbox" id="ap-rights-check">
+            <label for="ap-rights-check">I acknowledge that automated public-domain clips will carry attribution to the original creator.</label>
           </div>
           <button class="btn btn-primary" onclick="saveAutoPost()">Save schedule</button>
         </div>
@@ -5291,10 +5323,11 @@ async function loadAutoPost() {
     if (!res.ok) return;
     const cfg = await res.json();
     const enabledEl = document.getElementById('ap-enabled');
-    const nicheEl = document.getElementById('ap-niche');
+    const rightsEl = document.getElementById('ap-rights-check');
 
     if (enabledEl) enabledEl.checked = Boolean(cfg.enabled);
     if (nicheEl) nicheEl.value = cfg.niche || 'motivation';
+    if (rightsEl) rightsEl.checked = Boolean(cfg.rights_confirmed);
 
     const tList = document.getElementById('times-list');
     if (tList) {
@@ -5338,14 +5371,23 @@ async function saveAutoPost() {
   const niche = (document.getElementById('ap-niche')?.value || 'motivation').trim();
   const times = Array.from(document.querySelectorAll('#times-list input[type=time]')).map(i => i.value).filter(Boolean);
   const days = Array.from(document.querySelectorAll('#ap-days input:checked')).map(i => i.value);
+  const rights_confirmed = Boolean(document.getElementById('ap-rights-check')?.checked);
+
+  if (enabled && !rights_confirmed) {
+    showToast('Please confirm attribution acknowledgment to enable auto-post', 'error');
+    return;
+  }
 
   try {
     const res = await fetch('/api/v1/auto-post/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled, niche, times: times.length ? times : ["12:00"], days })
+      body: JSON.stringify({ enabled, niche, times: times.length ? times : ["12:00"], days, rights_confirmed })
     });
-    if (!res.ok) throw new Error('Save failed');
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.detail || 'Save failed');
+    }
     showToast('Auto-post schedule saved!', 'live');
   } catch (err) {
     showToast(err.message, 'error');

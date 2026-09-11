@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException
 
 from ..config import get_settings
 from ..db import ClipRepo, UserRepo
 from ..logging_conf import get_logger
 from ..schemas import AnalyzeRequest, JobCompletePayload, ProgressPayload
-from ..security import verify_admin, verify_worker_token
+from ..security import verify_worker_token
 from ..services import job_queue
 
 

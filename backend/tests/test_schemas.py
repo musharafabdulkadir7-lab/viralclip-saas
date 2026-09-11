@@ -48,9 +48,18 @@ def test_clip_request_requires_source_video_id_for_channel_modes():
 
 def test_autopost_rejects_bad_time_format():
     with pytest.raises(ValidationError):
-        AutoPostSettings(enabled=True, times=["25:99"], niche="x")
+        AutoPostSettings(enabled=True, times=["25:99"], niche="x", rights_confirmed=True)
 
 
 def test_autopost_accepts_valid_times():
-    settings = AutoPostSettings(enabled=True, times=["09:30", "23:00"], niche="x")
+    settings = AutoPostSettings(enabled=True, times=["09:30", "23:00"], niche="x", rights_confirmed=True)
     assert settings.times == ["09:30", "23:00"]
+    assert settings.rights_confirmed is True
+
+
+def test_autopost_requires_rights_confirmed_when_enabled():
+    with pytest.raises(ValidationError):
+        AutoPostSettings(enabled=True, niche="x", rights_confirmed=False)
+    # Disabled autopost can have rights_confirmed=False
+    disabled = AutoPostSettings(enabled=False, niche="x", rights_confirmed=False)
+    assert disabled.enabled is False

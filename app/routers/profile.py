@@ -30,7 +30,7 @@ async def get_profile(user_id: str = Depends(require_user)):
 async def get_auto_post_settings(user_id: str = Depends(require_user)):
     r = get_redis()
     default = {"enabled": False, "times": ["12:00"], "niche": "motivation",
-               "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]}
+               "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], "rights_confirmed": False}
     if not r:
         return default
     import json
@@ -42,6 +42,7 @@ async def get_auto_post_settings(user_id: str = Depends(require_user)):
         "times": json.loads(data.get("times", '["12:00"]')),
         "niche": data.get("niche", "motivation"),
         "days": json.loads(data.get("days", '["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]')),
+        "rights_confirmed": data.get("rights_confirmed") == "True",
     }
 
 
@@ -55,6 +56,7 @@ async def save_auto_post_settings(payload: AutoPostSettings, user_id: str = Depe
             "times": json.dumps(payload.times),
             "niche": payload.niche,
             "days": json.dumps(payload.days),
+            "rights_confirmed": str(payload.rights_confirmed),
         })
         if payload.enabled:
             await r.sadd("autopost:enabled", user_id)

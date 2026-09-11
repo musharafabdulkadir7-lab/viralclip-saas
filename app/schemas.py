@@ -46,6 +46,7 @@ class AutoPostSettings(BaseModel):
     times: List[str] = Field(default_factory=lambda: ["12:00"])
     niche: str = "motivation"
     days: List[str] = Field(default_factory=lambda: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
+    rights_confirmed: bool = False  # Required when enabling auto-post for CC/public domain
 
     @field_validator("times")
     @classmethod
@@ -55,6 +56,15 @@ class AutoPostSettings(BaseModel):
             if not time_pattern.match(t):
                 raise ValueError(f"Invalid time format: {t}. Expected HH:MM in 24h format")
         return times
+
+    @model_validator(mode="after")
+    def validate_rights_confirmed_if_enabled(self) -> "AutoPostSettings":
+        if self.enabled and not self.rights_confirmed:
+            raise ValueError(
+                "rights_confirmed must be true when enabling auto-post — "
+                "the user must explicitly acknowledge attribution for scheduled runs."
+            )
+        return self
 
 
 class UserProfileOut(BaseModel):
