@@ -7,6 +7,12 @@ google-auth-oauthlib>=1.2
 google-api-python-client>=2.130
 redis>=5.0
 python-dotenv>=1.0
+pydantic-settings>=2.0
+pyjwt>=2.8
+apscheduler>=3.10
+stripe>=8.0
+fastapi>=0.110
+uvicorn>=0.28
 
 # optional, only needed if you use youtube_uploader's token-persist path
 supabase>=2.4
