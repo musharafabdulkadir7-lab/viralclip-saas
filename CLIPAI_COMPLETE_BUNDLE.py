@@ -8,6 +8,7 @@
 # Real-time visitor presence tracking: app/routers/presence.py
 # WORKER_SECRET & ADMIN_SECRET rotation support (worker_secret_previous, admin_secret_previous)
 # All 50 automated test suites passing across all packages
+# Modern Editor-Console UI with timeline timecode ruler, refined type, and micro-interactions
 # ==============================================================================
 
 
@@ -170,6 +171,7 @@ def get_settings() -> Settings:
     s.ensure_dirs()
     return s
 
+
 ################################################################################
 # FILE: app/logging_conf.py
 ################################################################################
@@ -227,6 +229,7 @@ def get_logger(name: str) -> logging.Logger:
     logger.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
     logger.propagate = False
     return logger
+
 
 ################################################################################
 # FILE: app/redis_client.py
@@ -311,6 +314,7 @@ async def ping() -> bool:
         return True
     except Exception:
         return False
+
 
 ################################################################################
 # FILE: app/security.py
@@ -465,6 +469,7 @@ async def rate_limit(key: str, max_calls: int, window_sec: int) -> None:
 def stable_user_id_for_email(email: str) -> str:
     digest = hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()
     return f"user_{digest[:16]}"
+
 
 ################################################################################
 # FILE: app/db.py
@@ -633,6 +638,7 @@ class PartnerChannelRepo:
                 }).execute()
             except Exception as e:
                 log.error("PartnerChannelRepo.onboard failed: %s", e)
+
 
 ################################################################################
 # FILE: app/schemas.py
@@ -910,6 +916,7 @@ async def get_status(job_id: str) -> dict:
         "url": data.get("url", ""),
     }
 
+
 ################################################################################
 # FILE: app/services/clip_analysis.py
 ################################################################################
@@ -1019,6 +1026,7 @@ async def analyze(transcript: str, niche: str) -> dict:
         log.warning("Gemini analysis failed, using heuristic fallback: %s", e)
         return _heuristic_fallback(transcript, niche)
 
+
 ################################################################################
 # FILE: app/services/scheduler.py
 ################################################################################
@@ -1124,6 +1132,7 @@ async def start_scheduler() -> None:
 
 async def stop_scheduler() -> None:
     _scheduler.shutdown(wait=False)
+
 
 ################################################################################
 # FILE: app/routers/__init__.py
@@ -1311,6 +1320,7 @@ async def youtube_status(user_id: str = Depends(require_user)):
     user = UserRepo.get_or_create(user_id)
     return {"connected": bool(user.get("youtube_refresh_token"))}
 
+
 ################################################################################
 # FILE: app/routers/jobs.py
 ################################################################################
@@ -1444,6 +1454,7 @@ async def delete_clip(clip_id: str, user_id: str = Depends(require_user)):
 def _is_live_youtube_url(url: str) -> bool:
     return bool(url) and ("youtube.com" in url or "youtu.be" in url)
 
+
 ################################################################################
 # FILE: app/routers/worker_api.py
 ################################################################################
@@ -1557,6 +1568,7 @@ async def worker_heartbeat(user_id: str):
         return {"alive": True}
     alive = await r.get(f"worker_heartbeat:{user_id}") or await r.get("worker_heartbeat:cloud")
     return {"alive": bool(alive)}
+
 
 ################################################################################
 # FILE: app/routers/presence.py
@@ -1699,6 +1711,7 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
 
     return {"status": "success"}
 
+
 ################################################################################
 # FILE: app/routers/profile.py
 ################################################################################
@@ -1797,6 +1810,7 @@ async def redeem_invite(token: str, response=None):
     redir = RedirectResponse(url="/", status_code=302)
     redir.set_cookie(SESSION_COOKIE, token_val, max_age=SESSION_TTL_SEC, httponly=True, samesite="lax", secure=settings.env == "production")
     return redir
+
 
 ################################################################################
 # FILE: app/main.py
@@ -1897,6 +1911,7 @@ def create_app() -> FastAPI:
 
 app = create_app()
 
+
 ################################################################################
 # FILE: pipeline/__init__.py
 ################################################################################
@@ -1982,6 +1997,7 @@ class WorkerSettings:
 settings = WorkerSettings()
 settings.ensure_dirs()
 
+
 ################################################################################
 # FILE: pipeline/logging_setup.py
 ################################################################################
@@ -2026,6 +2042,7 @@ def get_logger(name: str) -> logging.Logger:
     logger.propagate = False
     return logger
 
+
 ################################################################################
 # FILE: pipeline/security.py
 ################################################################################
@@ -2050,6 +2067,7 @@ def sign_worker_token(user_id: str, purpose: str = "poll") -> str:
     window = int(time.time()) // WORKER_TOKEN_TTL_SEC
     msg = f"{user_id}:{purpose}:{window}".encode()
     return hmac.new(settings.worker_secret.encode(), msg, hashlib.sha256).hexdigest()
+
 
 ################################################################################
 # FILE: pipeline/video_finder.py
@@ -2309,6 +2327,7 @@ def register_uploaded_file(file_path: str, title: str = "Uploaded video") -> Vid
         raise VideoFinderError(f"Uploaded file not found: {file_path}")
     return VideoCandidate(id=p.stem, title=title[:60], local_path=str(p))
 
+
 ################################################################################
 # FILE: pipeline/video_downloader.py
 ################################################################################
@@ -2397,6 +2416,7 @@ def download_video_and_subs(url: str, video_id: str) -> DownloadResult:
     if not video_files:
         raise DownloadError("Video file not found after download completed without error.")
     return DownloadResult(video_path=video_files[0], sub_path=sub_files[0] if sub_files else None)
+
 
 ################################################################################
 # FILE: pipeline/clip_finder.py
@@ -2563,6 +2583,7 @@ def find_best_segments(sub_path: str, niche: str = "content", user_id: str = "de
 
     log.info("Selected %d segment(s) for %r", len(segments), niche)
     return segments
+
 
 ################################################################################
 # FILE: pipeline/clip_cutter.py
@@ -2751,6 +2772,7 @@ def cut_clip(video_path: str, start_sec: int, end_sec: int, caption: str, waterm
     return cut_and_format_clip(video_path=video_path, start_sec=start_sec, end_sec=actual_end, caption=caption,
                                 watermark=watermark, sub_path=sub_path, broll_path=broll_path, subtitle_style=subtitle_style)
 
+
 ################################################################################
 # FILE: pipeline/youtube_uploader.py
 ################################################################################
@@ -2821,6 +2843,7 @@ def upload_video_to_youtube(video_path: str, title: str, description: str, tags:
             time.sleep(2 * retries)
 
     return {"status": "success", "video_id": response.get("id"), "url": f"https://youtube.com/shorts/{response.get('id')}"}
+
 
 ################################################################################
 # FILE: pipeline/hot_pipeline.py
@@ -2915,6 +2938,7 @@ def prebake_clip_worker(niche: str) -> None:
 
 def trigger_replenish(niche: str) -> None:
     threading.Thread(target=prebake_clip_worker, args=(niche,), daemon=True).start()
+
 
 ################################################################################
 # FILE: pipeline/orchestrator.py
@@ -3163,6 +3187,7 @@ def _finish_and_publish(job: ClipJob, rendered: list[tuple[str, str]], video_tit
         else:
             update_job_status(job.job_id, "error", 100, f"Upload failed for {caption}: {res.get('error')}", user_id=job.user_id)
 
+
 ################################################################################
 # FILE: worker/__init__.py
 ################################################################################
@@ -3275,6 +3300,7 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
     run_worker_loop()
+
 
 ################################################################################
 # FILE: backend/tests/conftest.py
@@ -3471,6 +3497,7 @@ def test_admin_secret_rotation(monkeypatch):
         verify_admin(req_bad)
     assert exc.value.status_code == 403
 
+
 ################################################################################
 # FILE: backend/tests/test_schemas.py
 ################################################################################
@@ -3532,6 +3559,7 @@ def test_autopost_accepts_valid_times():
     settings = AutoPostSettings(enabled=True, times=["09:30", "23:00"], niche="x")
     assert settings.times == ["09:30", "23:00"]
 
+
 ################################################################################
 # FILE: backend/tests/test_clip_analysis.py
 ################################################################################
@@ -3569,6 +3597,7 @@ def test_parse_gemini_response_missing_fields_raises():
     import pytest
     with pytest.raises(ValueError):
         parse_gemini_response("garbage output", "finance")
+
 
 ################################################################################
 # FILE: worker/tests/test_clip_finder.py
@@ -3621,6 +3650,7 @@ def test_build_transcript_block_respects_char_limit(tmp_path):
     entries = parse_vtt(str(p))
     block = build_transcript_block(entries, max_chars=20)
     assert len(block) < 100  # truncated well below the full transcript
+
 
 ################################################################################
 # FILE: test_clip_cutter.py
@@ -3884,7 +3914,16 @@ def test_valid_own_content_file_job_has_no_source_kind_problem():
     <!-- Studio -->
     <main class="view active" id="view-studio">
       <div class="studio">
+        <div class="tc-ruler">
+          <span class="label">00:47 → 01:34</span>
+          <div class="window"></div>
+          <div class="tick"></div><div class="tick"></div><div class="tick"></div><div class="tick"></div>
+          <div class="tick"></div><div class="tick"></div><div class="tick"></div><div class="tick"></div>
+          <div class="tick"></div><div class="tick"></div><div class="tick"></div><div class="tick"></div>
+          <div class="tick"></div><div class="tick"></div><div class="tick"></div><div class="tick"></div>
+        </div>
         <h1>Point it at a niche.<br>It finds the cut.</h1>
+
         <p class="lede">ClipAI searches Creative-Commons-licensed video for your niche, finds the highest-retention moment, and renders it as a Short — with attribution handled automatically.</p>
 
         <div class="scrub-panel">
@@ -4069,6 +4108,7 @@ def test_valid_own_content_file_job_has_no_source_kind_problem():
 </body>
 </html>
 
+
 ################################################################################
 # FILE: frontend/static/style.css
 ################################################################################
@@ -4106,6 +4146,17 @@ def test_valid_own_content_file_job_has_no_source_kind_problem():
   --font-mono: 'IBM Plex Mono', monospace;
 
   --r: 3px; /* deliberately sharp, not rounded-card-kit */
+
+  /* Spacing Scale */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-7: 32px;
+  --s-8: 40px;
+  --s-9: 48px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -4230,9 +4281,11 @@ button, input, select { font-family: inherit; }
   transition: border-color .12s, background .12s;
 }
 .btn:hover { border-color: var(--line-lit); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 .btn-primary { background: var(--signal); border-color: var(--signal); color: #140a05; font-weight: 700; }
 .btn-primary:hover { filter: brightness(1.08); }
+.btn-primary:active:not(:disabled) { transform: translateY(1px); filter: brightness(0.96); }
 .btn-ghost { background: transparent; border-color: transparent; color: var(--text-dim); }
 .btn-ghost:hover { color: var(--text); background: var(--panel-2); }
 .btn-danger { color: var(--danger); border-color: #ff576833; }
@@ -4257,13 +4310,46 @@ button, input, select { font-family: inherit; }
   margin: 0 auto;
   padding: 48px 28px 80px;
 }
+
+/* Timecode ruler accent */
+.tc-ruler {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: var(--r);
+  width: fit-content;
+}
+.tc-ruler .label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--signal);
+  letter-spacing: 0.04em;
+  margin-right: 6px;
+}
+.tc-ruler .window {
+  width: 32px;
+  height: 6px;
+  background: var(--signal-dim);
+  border: 1px solid var(--signal);
+  border-radius: 1px;
+}
+.tc-ruler .tick {
+  width: 1px;
+  height: 8px;
+  background: var(--line-lit);
+}
+
 .studio h1 {
   font-family: var(--font-display);
-  font-size: 34px;
+  font-size: 40px;
   font-weight: 700;
-  letter-spacing: -0.6px;
-  line-height: 1.15;
-  margin-bottom: 6px;
+  letter-spacing: -0.8px;
+  line-height: 1.1;
+  margin-bottom: 8px;
 }
 .studio .lede { color: var(--text-dim); font-size: 14.5px; margin-bottom: 28px; max-width: 46ch; }
 
@@ -4319,7 +4405,7 @@ button, input, select { font-family: inherit; }
 
 .grid-2 {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px;
   margin-top: 16px;
   padding-top: 16px;
@@ -4349,6 +4435,7 @@ button, input, select { font-family: inherit; }
 
 .switch { position: relative; width: 38px; height: 21px; flex-shrink: 0; }
 .switch input { opacity: 0; width: 0; height: 0; }
+.switch input:focus-visible + .slide { outline: 2px solid var(--signal); outline-offset: 2px; }
 .switch .slide { position: absolute; inset: 0; background: var(--line-lit); border-radius: 20px; cursor: pointer; transition: .15s; }
 .switch .slide::before { content: ''; position: absolute; height: 15px; width: 15px; left: 3px; top: 3px; background: var(--text); border-radius: 50%; transition: .15s; }
 .switch input:checked + .slide { background: var(--signal); }
@@ -4370,9 +4457,10 @@ button, input, select { font-family: inherit; }
   align-items: center;
   justify-content: center;
   gap: 8px;
-  transition: filter .12s, opacity .12s;
+  transition: filter .12s, opacity .12s, transform .08s;
 }
 .run-btn:hover:not(:disabled) { filter: brightness(1.08); }
+.run-btn:active:not(:disabled) { transform: translateY(1px); filter: brightness(0.96); }
 .run-btn:disabled { opacity: .5; cursor: not-allowed; }
 
 .quota { font-size: 12px; color: var(--text-mute); }
@@ -4421,9 +4509,33 @@ button, input, select { font-family: inherit; }
 .empty { border: 1px dashed var(--line); padding: 48px; text-align: center; color: var(--text-mute); font-size: 13.5px; }
 
 .clip-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
-.clip-card { border: 1px solid var(--line); background: var(--panel); overflow: hidden; }
-.clip-thumb { aspect-ratio: 9/16; background: var(--bg); position: relative; cursor: pointer; }
-.clip-thumb img, .clip-thumb video { width: 100%; height: 100%; object-fit: cover; }
+.clip-card {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  overflow: hidden;
+  transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
+}
+.clip-card:hover {
+  border-color: var(--line-lit);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+.clip-thumb {
+  aspect-ratio: 9/16;
+  background: var(--bg);
+  position: relative;
+  cursor: pointer;
+  overflow: hidden;
+}
+.clip-thumb img, .clip-thumb video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform .2s ease;
+}
+.clip-thumb:hover img, .clip-thumb:hover video {
+  transform: scale(1.03);
+}
 .clip-thumb .badge { position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,.7); font-family: var(--font-mono); font-size: 10.5px; padding: 3px 7px; color: var(--warn); border: 1px solid var(--warn); }
 .clip-body { padding: 12px; }
 .clip-title { font-size: 13px; font-weight: 500; margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -4470,11 +4582,12 @@ button, input, select { font-family: inherit; }
 .toast.show { transform: translateX(0); }
 .toast.error { border-left-color: var(--danger); }
 
-/* Mobile bottom nav */
+/* Mobile bottom nav & responsive */
 .bottom-nav { display: none; }
 
 @media (max-width: 880px) {
   .rail { display: none; }
+  .tc-ruler { display: none; }
   .bottom-nav {
     display: flex;
     position: fixed;
@@ -4492,6 +4605,17 @@ button, input, select { font-family: inherit; }
   .grid-2 { grid-template-columns: 1fr; }
   .stat-row { grid-template-columns: 1fr; }
 }
+
+/* Accessibility: Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 
 ################################################################################
 # FILE: frontend/static/app.js
