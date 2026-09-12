@@ -5,14 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>ClipAI — Automated Shorts, cut right</title>
 <meta name="description" content="Point ClipAI at a niche. It finds the moment, cuts it, and posts it.">
-<meta name="theme-color" content="#0c0c0e">
+<meta name="theme-color" content="#0a0a0c">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><polygon points='0 0 24 12 0 24' fill='%23ff5a1f'/></svg>">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 
-<!-- Auth gate: shown until a valid session cookie exists. Replaces v2's
-     client-side-minted user_id — identity now only ever comes from the
-     server after real Google verification. -->
+<!-- Auth gate -->
 <div id="gate" class="gate">
   <div class="gate-box">
     <div class="mark-big"></div>
@@ -104,7 +103,6 @@
               <label for="rights-confirm-check">I acknowledge that clips generated from CC/public domain sources will carry attribution to the original creator.</label>
             </div>
           </div>
-
 
           <div class="grid-2">
             <div>
@@ -220,10 +218,22 @@
 </div>
 
 <nav class="bottom-nav">
-  <button data-view="studio" class="active" onclick="switchView('studio')">Studio</button>
-  <button data-view="workplace" onclick="switchView('workplace')">Workplace</button>
-  <button data-view="clips" onclick="switchView('clips')">Clips</button>
-  <button data-view="autopost" onclick="switchView('autopost')">Auto</button>
+  <button data-view="studio" class="active" onclick="switchView('studio')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+    Studio
+  </button>
+  <button data-view="workplace" onclick="switchView('workplace')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="1"/><path d="M3 9h18"/></svg>
+    Workplace
+  </button>
+  <button data-view="clips" onclick="switchView('clips')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="1"/><path d="M9 21V9"/></svg>
+    Clips
+  </button>
+  <button data-view="autopost" onclick="switchView('autopost')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+    Auto
+  </button>
 </nav>
 
 <!-- Account modal -->
