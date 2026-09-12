@@ -38,26 +38,31 @@ function switchView(viewName) {
   if (viewName === 'clips') loadClips();
   if (viewName === 'autopost') loadAutoPost();
 }
+window.switchView = switchView;
 
 // ─── Modal Management ─────────────────────────────────────────────────────
 function openModal(id) {
   const m = document.getElementById(id);
   if (m) m.classList.remove('hidden');
 }
+window.openModal = openModal;
 
 function closeModal(id) {
   const m = document.getElementById(id);
   if (m) m.classList.add('hidden');
 }
+window.closeModal = closeModal;
 
 function openAccount() {
   openModal('account-modal');
   refreshAccountDetails();
 }
+window.openAccount = openAccount;
 
 function openBilling() {
   openModal('billing-modal');
 }
+window.openBilling = openBilling;
 
 async function signOut() {
   try {
@@ -67,6 +72,7 @@ async function signOut() {
   }
   window.location.href = '/';
 }
+window.signOut = signOut;
 
 async function checkout(tier) {
   try {
@@ -85,6 +91,7 @@ async function checkout(tier) {
     showToast('Billing error: ' + err.message, 'error');
   }
 }
+window.checkout = checkout;
 
 // ─── User Profile & Auth Verification ─────────────────────────────────────
 async function checkAuthAndProfile() {
@@ -610,6 +617,14 @@ async function saveAutoPost() {
     showToast(err.message, 'error');
   }
 }
+
+window.loadWorkplace = loadWorkplace;
+window.publishDraft = publishDraft;
+window.deleteDraft = deleteDraft;
+window.loadClips = loadClips;
+window.loadAutoPost = loadAutoPost;
+window.addTime = addTime;
+window.saveAutoPost = saveAutoPost;
 
 // ─── Utilities ────────────────────────────────────────────────────────────
 function escapeHtml(str) {
