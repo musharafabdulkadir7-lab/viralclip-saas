@@ -66,12 +66,33 @@ def _verify_signed_state(raw: str) -> tuple[bool, str, str]:
     return False, "", ""
 
 
+def _get_base_url(request: Request | None = None) -> str:
+    """Derives base url cleanly, respecting reverse proxies and settings."""
+    if settings.api_base_url and settings.api_base_url not in ("http://localhost:8000", "http://127.0.0.1:8000"):
+        base = settings.api_base_url.rstrip("/")
+        # If running behind HTTPS reverse proxy (like Render), ensure scheme matches
+        if request:
+            proto = request.headers.get("x-forwarded-proto", "").lower()
+            if proto == "https" and base.startswith("http://"):
+                base = "https://" + base[7:]
+        return base
+
+    if request:
+        proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+        host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+        return f"{proto}://{host}".rstrip("/")
+    return settings.api_base_url.rstrip("/")
+
+
 @router.get("/google/login")
-async def start_google_login():
+async def start_google_login(request: Request = None):
     """Sign-in-with-Google — issues our own session on success."""
     if not settings.google_client_id:
         log.error("Google OAuth client_id is not configured.")
         return RedirectResponse("/?auth=error&detail=not_configured")
+
+    base_url = _get_base_url(request)
+    redirect_uri = f"{base_url}/api/v1/auth/google/callback"
 
     state = str(uuid.uuid4())
     r = get_redis()
@@ -83,7 +104,7 @@ async def start_google_login():
 
     params = {
         "client_id": settings.google_client_id,
-        "redirect_uri": f"{settings.api_base_url}/api/v1/auth/google/callback",
+        "redirect_uri": redirect_uri,
         "response_type": "code",
         "scope": " ".join(LOGIN_SCOPES),
         "access_type": "online",
@@ -129,13 +150,16 @@ async def google_login_callback(request: Request, state: str = "", code: str = "
     if not valid:
         return RedirectResponse("/?auth=error&detail=invalid_state")
 
+    base_url = _get_base_url(request)
+    redirect_uri = f"{base_url}/api/v1/auth/google/callback"
+
     async with httpx.AsyncClient(timeout=15) as client:
         token_res = await client.post("https://oauth2.googleapis.com/token", data={
             "client_id": settings.google_client_id,
             "client_secret": settings.google_client_secret,
             "code": code,
             "grant_type": "authorization_code",
-            "redirect_uri": f"{settings.api_base_url}/api/v1/auth/google/callback",
+            "redirect_uri": redirect_uri,
         })
         if token_res.status_code != 200:
             log.warning("Google token exchange failed: %s", token_res.text[:300])
@@ -188,10 +212,13 @@ async def logout(response: Response):
 
 # ── YouTube channel connect (separate from login) ──────────────────
 @router.get("/youtube/connect")
-async def connect_youtube(user_id: str = Depends(require_user)):
+async def connect_youtube(request: Request, user_id: str = Depends(require_user)):
     if not settings.google_client_id:
         log.error("Google OAuth client_id is not configured for YouTube connect.")
         return RedirectResponse("/?youtube=error&detail=not_configured")
+
+    base_url = _get_base_url(request)
+    redirect_uri = f"{base_url}/api/v1/auth/youtube/callback"
 
     state = str(uuid.uuid4())
     r = get_redis()
@@ -203,7 +230,7 @@ async def connect_youtube(user_id: str = Depends(require_user)):
 
     params = {
         "client_id": settings.google_client_id,
-        "redirect_uri": f"{settings.api_base_url}/api/v1/auth/youtube/callback",
+        "redirect_uri": redirect_uri,
         "response_type": "code",
         "scope": " ".join(YOUTUBE_SCOPES),
         "access_type": "offline",
@@ -246,13 +273,16 @@ async def youtube_connect_callback(request: Request, state: str = "", code: str 
     if not user_id:
         return RedirectResponse("/?youtube=error&detail=invalid_state")
 
+    base_url = _get_base_url(request)
+    redirect_uri = f"{base_url}/api/v1/auth/youtube/callback"
+
     async with httpx.AsyncClient(timeout=15) as client:
         token_res = await client.post("https://oauth2.googleapis.com/token", data={
             "client_id": settings.google_client_id,
             "client_secret": settings.google_client_secret,
             "code": code,
             "grant_type": "authorization_code",
-            "redirect_uri": f"{settings.api_base_url}/api/v1/auth/youtube/callback",
+            "redirect_uri": redirect_uri,
         })
     if token_res.status_code != 200:
         return RedirectResponse("/?youtube=error")
