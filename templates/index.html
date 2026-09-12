@@ -6,7 +6,7 @@
 <title>ClipAI — Automated Shorts, cut right</title>
 <meta name="description" content="Point ClipAI at a niche. It finds the moment, cuts it, and posts it.">
 <meta name="theme-color" content="#0c0c0e">
-<link rel="stylesheet" href="/static/style.css?v=3.1">
+<link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 
@@ -71,11 +71,12 @@
         <p class="lede">ClipAI searches Creative-Commons-licensed video for your niche, finds the highest-retention moment, and renders it as a Short — with attribution handled automatically.</p>
 
         <div class="scrub-panel">
+          <label class="field-label">What are you clipping?</label>
           <div class="source-tabs" id="source-tabs">
-            <button type="button" data-mode="my_upload" class="source-tab-btn picked" onclick="setSourceMode('my_upload')">Upload a file</button>
-            <button type="button" data-mode="my_channel" class="source-tab-btn" onclick="setSourceMode('my_channel')">My YouTube channel</button>
-            <button type="button" data-mode="partner_channel" class="source-tab-btn" onclick="setSourceMode('partner_channel')">A partnered creator</button>
-            <button type="button" data-mode="public_domain" class="source-tab-btn" onclick="setSourceMode('public_domain')">Public domain / CC</button>
+            <button type="button" data-mode="my_upload" class="source-tab-btn picked">Upload a file</button>
+            <button type="button" data-mode="my_channel" class="source-tab-btn">My YouTube channel</button>
+            <button type="button" data-mode="partner_channel" class="source-tab-btn">A partnered creator</button>
+            <button type="button" data-mode="public_domain" class="source-tab-btn">Public domain / CC</button>
           </div>
 
           <div id="picker-my_upload" class="source-picker">
@@ -251,6 +252,6 @@
 
 <div id="toasts"></div>
 
-<script src="/static/app.js?v=3.1"></script>
+<script src="/static/app.js"></script>
 </body>
 </html>

@@ -220,13 +220,6 @@ function initStudio() {
 
 function setSourceMode(mode) {
   currentSourceMode = mode;
-  document.querySelectorAll('.source-tab-btn').forEach(btn => {
-    if (btn.dataset.mode === mode) {
-      btn.classList.add('picked');
-    } else {
-      btn.classList.remove('picked');
-    }
-  });
   document.querySelectorAll('.source-picker').forEach(el => el.classList.add('hidden'));
   const activePicker = document.getElementById(`picker-${mode}`);
   if (activePicker) activePicker.classList.remove('hidden');
@@ -234,9 +227,6 @@ function setSourceMode(mode) {
   if (mode === 'my_channel') loadMyChannelVideos();
   if (mode === 'partner_channel') loadPartnerChannels();
 }
-window.setSourceMode = setSourceMode;
-window.loadMyChannelVideos = loadMyChannelVideos;
-window.loadPartnerChannels = loadPartnerChannels;
 
 async function loadMyChannelVideos() {
   const select = document.getElementById('my-video-select');
