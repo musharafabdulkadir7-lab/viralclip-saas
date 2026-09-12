@@ -62,6 +62,8 @@ button, input, select { font-family: inherit; }
 ::-webkit-scrollbar-thumb { background: var(--line-lit); }
 ::-webkit-scrollbar-track { background: transparent; }
 
+.hidden { display: none !important; }
+
 /* ── Shell ────────────────────────────────────────────────────────── */
 .shell { display: flex; height: 100vh; }
 

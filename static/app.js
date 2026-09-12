@@ -60,9 +60,12 @@ function openBilling() {
 }
 
 async function signOut() {
-  document.cookie = "clipai_session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;";
-  document.cookie = "user_id=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;";
-  window.location.reload();
+  try {
+    await fetch('/api/v1/auth/logout', { method: 'POST' });
+  } catch (e) {
+    console.error('Sign out error:', e);
+  }
+  window.location.href = '/';
 }
 
 async function checkout(tier) {
@@ -88,14 +91,14 @@ async function checkAuthAndProfile() {
   try {
     const res = await fetch('/api/v1/user/profile');
     if (res.status === 401 || res.status === 403) {
-      document.getElementById('gate').style.display = 'flex';
-      document.getElementById('shell').style.display = 'none';
+      document.getElementById('gate').classList.remove('hidden');
+      document.getElementById('shell').classList.add('hidden');
       return false;
     }
     const data = await res.json();
     currentUser = data;
-    document.getElementById('gate').style.display = 'none';
-    document.getElementById('shell').style.display = 'flex';
+    document.getElementById('gate').classList.add('hidden');
+    document.getElementById('shell').classList.remove('hidden');
 
     updateQuotaDisplay(data);
     refreshAccountDetails();
@@ -103,8 +106,8 @@ async function checkAuthAndProfile() {
     checkWorkerHeartbeat();
     return true;
   } catch (e) {
-    document.getElementById('gate').style.display = 'flex';
-    document.getElementById('shell').style.display = 'none';
+    document.getElementById('gate').classList.remove('hidden');
+    document.getElementById('shell').classList.add('hidden');
     return false;
   }
 }
@@ -175,8 +178,21 @@ async function checkWorkerHeartbeat() {
 }
 setInterval(checkWorkerHeartbeat, 15000);
 
+let currentSourceMode = 'my_upload';
+
 // ─── Studio: Clip Generation ──────────────────────────────────────────────
 function initStudio() {
+  const sourceTabs = document.getElementById('source-tabs');
+  if (sourceTabs) {
+    sourceTabs.addEventListener('click', (e) => {
+      const btn = e.target.closest('.source-tab-btn');
+      if (!btn) return;
+      sourceTabs.querySelectorAll('.source-tab-btn').forEach(b => b.classList.remove('picked'));
+      btn.classList.add('picked');
+      setSourceMode(btn.dataset.mode);
+    });
+  }
+
   const reel = document.getElementById('reel');
   const nicheInput = document.getElementById('niche-input');
   if (reel && nicheInput) {
@@ -195,19 +211,110 @@ function initStudio() {
   }
 }
 
+function setSourceMode(mode) {
+  currentSourceMode = mode;
+  document.querySelectorAll('.source-picker').forEach(el => el.classList.add('hidden'));
+  const activePicker = document.getElementById(`picker-${mode}`);
+  if (activePicker) activePicker.classList.remove('hidden');
+
+  if (mode === 'my_channel') loadMyChannelVideos();
+  if (mode === 'partner_channel') loadPartnerChannels();
+}
+
+async function loadMyChannelVideos() {
+  const select = document.getElementById('my-video-select');
+  if (!select) return;
+  select.innerHTML = '<option value="">Loading your videos…</option>';
+  try {
+    const res = await fetch('/api/v1/my-channel/videos');
+    if (!res.ok) {
+      const err = await res.json();
+      select.innerHTML = `<option value="">${err.detail || 'YouTube not connected'}</option>`;
+      return;
+    }
+    const data = await res.json();
+    if (!data.videos || data.videos.length === 0) {
+      select.innerHTML = '<option value="">No videos found on your channel</option>';
+      return;
+    }
+    select.innerHTML = data.videos.map(v => `<option value="${v.id}">${v.title || v.id} (${Math.round((v.duration||0)/60)}m)</option>`).join('');
+  } catch (err) {
+    select.innerHTML = '<option value="">Failed to load videos</option>';
+  }
+}
+
+async function loadPartnerChannels() {
+  const select = document.getElementById('partner-select');
+  if (!select) return;
+  select.innerHTML = '<option value="">Loading partner channels…</option>';
+  try {
+    const res = await fetch('/api/v1/partner-channels');
+    const data = await res.json();
+    if (!data.channels || data.channels.length === 0) {
+      select.innerHTML = '<option value="">No partner channels currently active</option>';
+      return;
+    }
+    select.innerHTML = data.channels.map(c => `<option value="${c.channel_id}">${c.channel_title || c.channel_id}</option>`).join('');
+  } catch (err) {
+    select.innerHTML = '<option value="">Failed to load partner channels</option>';
+  }
+}
+
 async function startGeneration() {
-  const nicheInput = document.getElementById('niche-input');
   const layoutSel = document.getElementById('layout-select');
   const subSel = document.getElementById('subtitle-select');
   const numSel = document.getElementById('numclips-select');
   const autoToggle = document.getElementById('autopost-toggle');
   const runBtn = document.getElementById('run-btn');
 
-  const niche = (nicheInput?.value || 'motivation').trim();
-  if (!niche) {
-    showToast('Please enter a niche or creator', 'error');
-    return;
+  const payload = {
+    source_mode: currentSourceMode,
+    layout: layoutSel?.value || 'cinematic_blur',
+    subtitle_style: subSel?.value || 'bold_captions',
+    num_clips: parseInt(numSel?.value || '1', 10),
+    auto_upload: Boolean(autoToggle?.checked),
+  };
+
+  if (currentSourceMode === 'my_upload') {
+    const uploadInput = document.getElementById('upload-input');
+    const file = uploadInput?.files?.[0];
+    if (!file) {
+      showToast('Please select a video file to upload', 'error');
+      return;
+    }
+    payload.source_video_id = file.name;
+    payload.niche = file.name.replace(/\.[^/.]+$/, "");
+  } else if (currentSourceMode === 'my_channel') {
+    const myVid = document.getElementById('my-video-select')?.value;
+    if (!myVid) {
+      showToast('Please select a video from your YouTube channel', 'error');
+      return;
+    }
+    payload.source_video_id = myVid;
+  } else if (currentSourceMode === 'partner_channel') {
+    const partnerId = document.getElementById('partner-select')?.value;
+    if (!partnerId) {
+      showToast('Please select a partner creator', 'error');
+      return;
+    }
+    payload.partner_channel_id = partnerId;
+    payload.source_video_id = partnerId; // signals partner sourcing target
+  } else if (currentSourceMode === 'public_domain') {
+    const nicheInput = document.getElementById('niche-input');
+    const niche = (nicheInput?.value || '').trim();
+    if (!niche) {
+      showToast('Please enter a topic or niche hint', 'error');
+      return;
+    }
+    const rightsCheck = document.getElementById('rights-confirm-check');
+    if (rightsCheck && !rightsCheck.checked) {
+      showToast('Please confirm attribution acknowledgment to proceed', 'error');
+      return;
+    }
+    payload.niche = niche;
+    payload.rights_confirmed = Boolean(rightsCheck ? rightsCheck.checked : true);
   }
+
 
   runBtn.disabled = true;
   runBtn.textContent = 'Queuing…';
@@ -216,13 +323,7 @@ async function startGeneration() {
     const res = await fetch('/api/v1/generate-clip', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        niche: niche,
-        layout: layoutSel?.value || 'cinematic_blur',
-        subtitle_style: subSel?.value || 'bold_captions',
-        num_clips: parseInt(numSel?.value || '1', 10),
-        auto_upload: Boolean(autoToggle?.checked)
-      })
+      body: JSON.stringify(payload)
     });
 
     if (res.status === 402) {
@@ -316,15 +417,17 @@ function updateTicks(pct) {
 }
 
 // ─── Workplace (Review & Publish Drafts) ───────────────────────────────────
+// ─── Workplace (Review & Publish Drafts) ───────────────────────────────────
 async function loadWorkplace() {
   const grid = document.getElementById('workplace-grid');
   if (!grid) return;
   grid.innerHTML = '<div class="empty">Loading drafts…</div>';
 
   try {
-    const res = await fetch('/api/v1/workplace/drafts');
+    const res = await fetch('/api/v1/workplace/clips');
     if (!res.ok) throw new Error('Failed to load drafts');
-    const drafts = await res.json();
+    const data = await res.json();
+    const drafts = data.clips || data.drafts || (Array.isArray(data) ? data : []);
 
     if (!drafts || drafts.length === 0) {
       grid.innerHTML = '<div class="empty">No drafts waiting for review. Render a clip with auto-post turned off to review it here first.</div>';
@@ -353,7 +456,7 @@ async function loadWorkplace() {
 
 async function publishDraft(clipId) {
   try {
-    const res = await fetch('/api/v1/workplace/publish', {
+    const res = await fetch('/api/v1/clip/publish-draft', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clip_id: clipId })
@@ -385,7 +488,7 @@ async function loadClips() {
   grid.innerHTML = '<div class="empty">Loading channel clips…</div>';
 
   try {
-    const res = await fetch('/api/v1/analytics');
+    const res = await fetch('/api/v1/clips');
     if (!res.ok) throw new Error('Failed to load clips');
     const data = await res.json();
 
@@ -437,9 +540,11 @@ async function loadAutoPost() {
     const cfg = await res.json();
     const enabledEl = document.getElementById('ap-enabled');
     const nicheEl = document.getElementById('ap-niche');
+    const rightsEl = document.getElementById('ap-rights-check');
 
     if (enabledEl) enabledEl.checked = Boolean(cfg.enabled);
     if (nicheEl) nicheEl.value = cfg.niche || 'motivation';
+    if (rightsEl) rightsEl.checked = Boolean(cfg.rights_confirmed);
 
     const tList = document.getElementById('times-list');
     if (tList) {
@@ -470,10 +575,9 @@ function addTime(val = '12:00') {
   const list = document.getElementById('times-list');
   if (!list) return;
   const row = document.createElement('div');
-  row.style.display = 'flex';
-  row.style.gap = '8px';
+  row.className = 'time-row';
   row.innerHTML = `
-    <input type="time" value="${val}" style="flex:1;">
+    <input type="time" value="${val}">
     <button class="btn btn-ghost" type="button" onclick="this.parentElement.remove()">✕</button>
   `;
   list.appendChild(row);
@@ -484,14 +588,23 @@ async function saveAutoPost() {
   const niche = (document.getElementById('ap-niche')?.value || 'motivation').trim();
   const times = Array.from(document.querySelectorAll('#times-list input[type=time]')).map(i => i.value).filter(Boolean);
   const days = Array.from(document.querySelectorAll('#ap-days input:checked')).map(i => i.value);
+  const rights_confirmed = Boolean(document.getElementById('ap-rights-check')?.checked);
+
+  if (enabled && !rights_confirmed) {
+    showToast('Please confirm attribution acknowledgment to enable auto-post', 'error');
+    return;
+  }
 
   try {
     const res = await fetch('/api/v1/auto-post/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled, niche, times: times.length ? times : ["12:00"], days })
+      body: JSON.stringify({ enabled, niche, times: times.length ? times : ["12:00"], days, rights_confirmed })
     });
-    if (!res.ok) throw new Error('Save failed');
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.detail || 'Save failed');
+    }
     showToast('Auto-post schedule saved!', 'live');
   } catch (err) {
     showToast(err.message, 'error');
@@ -518,6 +631,53 @@ function extractYtId(url) {
 
 // ─── DOM Initialization ───────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  // Handle auth / youtube redirect query parameters
+  const params = new URLSearchParams(window.location.search);
+  const authStatus = params.get('auth');
+  const ytStatus = params.get('youtube');
+  const detail = params.get('detail');
+
+  if (authStatus === 'error') {
+    const msg = detail === 'invalid_state' ? 'Login session expired or invalid. Please try again.'
+              : detail === 'unverified_email' ? 'Please verify your Google email address.'
+              : detail === 'not_configured' ? 'Google OAuth is not configured yet on this instance.'
+              : 'Google sign-in failed. Please try again.';
+    showToast(msg, 'error');
+    window.history.replaceState({}, document.title, window.location.pathname);
+  } else if (authStatus === 'success') {
+    showToast('Signed in successfully!', 'live');
+    window.history.replaceState({}, document.title, window.location.pathname);
+  }
+
+  if (ytStatus === 'error') {
+    const msg = detail === 'invalid_state' ? 'YouTube connection session expired. Please retry.'
+              : detail === 'not_configured' ? 'YouTube OAuth is not configured on this instance.'
+              : 'Failed to connect YouTube channel. Please try again.';
+    showToast(msg, 'error');
+    window.history.replaceState({}, document.title, window.location.pathname);
+  } else if (ytStatus === 'connected') {
+    showToast('YouTube channel connected successfully!', 'live');
+    window.history.replaceState({}, document.title, window.location.pathname);
+  }
+
   initStudio();
   checkAuthAndProfile();
 });
+
+function getVisitorId() {
+  let id = sessionStorage.getItem('clipai_visitor_id');
+  if (!id) {
+    id = 'v_' + Math.random().toString(36).slice(2) + Date.now();
+    sessionStorage.setItem('clipai_visitor_id', id);
+  }
+  return id;
+}
+
+async function sendPresencePing() {
+  try {
+    await fetch(`/api/v1/presence/ping?visitor_id=${getVisitorId()}`, { method: 'POST' });
+  } catch (e) {}
+}
+
+sendPresencePing();
+setInterval(sendPresencePing, 20000);

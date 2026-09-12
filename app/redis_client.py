@@ -23,12 +23,26 @@ settings = get_settings()
 _QUOTA_MARKERS = ("max monthly", "quota", "limit exceeded", "maxmemory")
 
 
+def _safe_create_redis(url: str):
+    if not url or not isinstance(url, str):
+        return None
+    url_clean = url.strip().strip("'\"")
+    if not (url_clean.startswith("redis://") or url_clean.startswith("rediss://") or url_clean.startswith("unix://")):
+        log.warning("Invalid Redis URL scheme skipped: %r (must start with redis://, rediss://, or unix://)", url_clean[:15] if url_clean else "")
+        return None
+    try:
+        return aioredis.from_url(url_clean, decode_responses=True)
+    except Exception as e:
+        log.warning("Could not initialize Redis client from URL: %s", e)
+        return None
+
+
 class FailoverRedis:
     def __init__(self, primary_url: str, secondary_url: str = "", tertiary_url: str = "", quaternary_url: str = ""):
-        self.primary = aioredis.from_url(primary_url, decode_responses=True) if primary_url else None
-        self.secondary = aioredis.from_url(secondary_url, decode_responses=True) if secondary_url else None
-        self.tertiary = aioredis.from_url(tertiary_url, decode_responses=True) if tertiary_url else None
-        self.quaternary = aioredis.from_url(quaternary_url, decode_responses=True) if quaternary_url else None
+        self.primary = _safe_create_redis(primary_url)
+        self.secondary = _safe_create_redis(secondary_url)
+        self.tertiary = _safe_create_redis(tertiary_url)
+        self.quaternary = _safe_create_redis(quaternary_url)
 
     async def _clients(self):
         return [c for c in (self.primary, self.secondary, self.tertiary, self.quaternary) if c is not None]

@@ -25,7 +25,7 @@
   </div>
 </div>
 
-<div class="shell" id="shell" style="display:none;">
+<div class="shell hidden" id="shell">
   <aside class="rail">
     <div class="rail-brand"><div class="mark"></div><span>ClipAI</span></div>
     <div class="rail-tick-label">Workspace</div>
@@ -47,7 +47,7 @@
 
   <div class="main">
     <header class="topbar">
-      <button class="pill" id="yt-badge" style="cursor:pointer;" onclick="location.href='/api/v1/auth/youtube/connect'">
+      <button class="pill cursor-pointer" id="yt-badge" onclick="location.href='/api/v1/auth/youtube/connect'">
         <span class="dot" id="yt-dot"></span><span id="yt-label">Connect YouTube</span>
       </button>
       <div class="topbar-spacer"></div>
@@ -58,22 +58,53 @@
     <!-- Studio -->
     <main class="view active" id="view-studio">
       <div class="studio">
+        <div class="tc-ruler">
+          <span class="label">00:47 → 01:34</span>
+          <div class="window"></div>
+          <div class="tick"></div><div class="tick"></div><div class="tick"></div><div class="tick"></div>
+          <div class="tick"></div><div class="tick"></div><div class="tick"></div><div class="tick"></div>
+          <div class="tick"></div><div class="tick"></div><div class="tick"></div><div class="tick"></div>
+          <div class="tick"></div><div class="tick"></div><div class="tick"></div><div class="tick"></div>
+        </div>
         <h1>Point it at a niche.<br>It finds the cut.</h1>
+
         <p class="lede">ClipAI searches Creative-Commons-licensed video for your niche, finds the highest-retention moment, and renders it as a Short — with attribution handled automatically.</p>
 
         <div class="scrub-panel">
-          <label class="field-label">Niche or creator</label>
-          <div class="scrub-row">
-            <input id="niche-input" class="scrub-input" placeholder="e.g. Finance, Cooking, MrBeast" value="motivation" autocomplete="off">
-            <button id="run-btn" class="run-btn" style="flex:0 0 170px;">Generate</button>
+          <label class="field-label">What are you clipping?</label>
+          <div class="source-tabs" id="source-tabs">
+            <button type="button" data-mode="my_upload" class="source-tab-btn picked">Upload a file</button>
+            <button type="button" data-mode="my_channel" class="source-tab-btn">My YouTube channel</button>
+            <button type="button" data-mode="partner_channel" class="source-tab-btn">A partnered creator</button>
+            <button type="button" data-mode="public_domain" class="source-tab-btn">Public domain / CC</button>
           </div>
-          <div class="reel" id="reel">
-            <button data-n="motivation" class="picked">Motivation</button>
-            <button data-n="finance">Finance</button>
-            <button data-n="gaming">Gaming</button>
-            <button data-n="ai tech">AI &amp; Tech</button>
-            <button data-n="cooking">Cooking</button>
+
+          <div id="picker-my_upload" class="source-picker">
+            <input type="file" id="upload-input" accept="video/*" class="scrub-input">
           </div>
+          <div id="picker-my_channel" class="source-picker hidden">
+            <select id="my-video-select" class="scrub-input"><option value="">Loading your videos…</option></select>
+          </div>
+          <div id="picker-partner_channel" class="source-picker hidden">
+            <select id="partner-select" class="scrub-input"><option value="">Loading partner channels…</option></select>
+          </div>
+          <div id="picker-public_domain" class="source-picker hidden">
+            <div class="scrub-row">
+              <input id="niche-input" class="scrub-input" placeholder="e.g. Finance, Cooking, Archive" value="motivation" autocomplete="off">
+            </div>
+            <div class="reel" id="reel">
+              <button type="button" data-n="motivation" class="picked">Motivation</button>
+              <button type="button" data-n="finance">Finance</button>
+              <button type="button" data-n="gaming">Gaming</button>
+              <button type="button" data-n="ai tech">AI &amp; Tech</button>
+              <button type="button" data-n="cooking">Cooking</button>
+            </div>
+            <div class="rights-row">
+              <input type="checkbox" id="rights-confirm-check">
+              <label for="rights-confirm-check">I acknowledge that clips generated from CC/public domain sources will carry attribution to the original creator.</label>
+            </div>
+          </div>
+
 
           <div class="grid-2">
             <div>
@@ -111,6 +142,7 @@
 
           <div class="run-row">
             <span class="quota" id="quota-label"></span>
+            <button id="run-btn" class="run-btn">Generate</button>
           </div>
 
           <div class="timeline-progress" id="progress">
@@ -159,7 +191,7 @@
       <div class="page">
         <div class="page-head"><div><h2>Auto-Post</h2><p>Generate and publish on a schedule, hands-free.</p></div></div>
         <div class="form-card">
-          <div class="toggle-row" style="margin-bottom:22px;">
+          <div class="toggle-row mb-4">
             <div><div class="t-label">Enable auto-post</div><div class="t-sub">Runs on the days/times below</div></div>
             <label class="switch"><input type="checkbox" id="ap-enabled"><span class="slide"></span></label>
           </div>
@@ -175,6 +207,10 @@
           <div class="form-block">
             <label class="field-label">Days</label>
             <div class="days" id="ap-days"></div>
+          </div>
+          <div class="rights-row mb-4">
+            <input type="checkbox" id="ap-rights-check">
+            <label for="ap-rights-check">I acknowledge that automated public-domain clips will carry attribution to the original creator.</label>
           </div>
           <button class="btn btn-primary" onclick="saveAutoPost()">Save schedule</button>
         </div>
@@ -198,7 +234,7 @@
     <div class="modal-row"><span class="k">Plan</span><span id="acc-plan">—</span></div>
     <div class="modal-row"><span class="k">Free renders used</span><span id="acc-used">—</span></div>
     <div class="modal-actions">
-      <button class="btn" style="flex:1" onclick="closeModal('account-modal')">Close</button>
+      <button class="btn btn-flex-1" onclick="closeModal('account-modal')">Close</button>
       <button class="btn btn-danger" onclick="signOut()">Sign out</button>
     </div>
   </div>
@@ -210,7 +246,7 @@
     <h3>Upgrade</h3>
     <div class="modal-row"><span class="k">Pro — $29/mo</span><button class="btn btn-primary" onclick="checkout('pro')">Choose</button></div>
     <div class="modal-row"><span class="k">Full Version — $49/mo</span><button class="btn btn-primary" onclick="checkout('full_version')">Choose</button></div>
-    <div class="modal-actions"><button class="btn" style="flex:1" onclick="closeModal('billing-modal')">Close</button></div>
+    <div class="modal-actions"><button class="btn btn-flex-1" onclick="closeModal('billing-modal')">Close</button></div>
   </div>
 </div>
 
