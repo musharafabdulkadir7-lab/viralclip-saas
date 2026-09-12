@@ -46,7 +46,10 @@ STATE_COOKIE_YT = "clipai_oauth_yt"
 
 
 def _state_secret() -> str:
-    return settings.jwt_signing_key or settings.worker_secret or "clipai_state_sig"
+    secret = settings.jwt_signing_key or settings.worker_secret
+    if not secret:
+        raise RuntimeError("Cannot sign OAuth state: JWT_SIGNING_KEY or WORKER_SECRET must be set.")
+    return secret
 
 
 def _sign_state(state: str, extra: str = "") -> str:
@@ -198,9 +201,19 @@ async def google_login_callback(request: Request, state: str = "", code: str = "
 
 
 def _apply_referral_bonus(new_user_id: str, referrer_id: str) -> None:
-    bonus = settings.referral_bonus_clips
+    # Validate the referrer actually exists in our system
     referrer = UserRepo.get_or_create(referrer_id)
-    UserRepo.update(referrer_id, {"free_clips_used": max(0, referrer.get("free_clips_used", 0) - bonus)})
+    if not referrer or referrer.get("id") != referrer_id:
+        return
+    # Prevent self-referral
+    if referrer_id == new_user_id:
+        return
+    # Only apply bonus to free-tier users, and don't drive the counter below zero
+    if referrer.get("license") == "free_tier":
+        bonus = settings.referral_bonus_clips
+        current_used = max(0, referrer.get("free_clips_used", 0))
+        new_used = max(0, current_used - bonus)
+        UserRepo.update(referrer_id, {"free_clips_used": new_used})
     UserRepo.update(new_user_id, {"free_clips_used": 0, "referred_by": referrer_id})
 
 

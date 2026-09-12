@@ -76,9 +76,9 @@ def optional_user(request: Request) -> Optional[str]:
 
 
 def _signing_key() -> str:
-    key = settings.jwt_signing_key or settings.worker_secret
+    key = settings.jwt_signing_key
     if not key:
-        raise RuntimeError("JWT_SIGNING_KEY (or WORKER_SECRET) must be set.")
+        raise RuntimeError("JWT_SIGNING_KEY must be set — it must not fall back to WORKER_SECRET.")
     return key
 
 

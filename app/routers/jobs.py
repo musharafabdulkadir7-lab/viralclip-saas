@@ -62,7 +62,7 @@ async def generate_clip(payload: ClipRequest, user_id: str = Depends(require_use
         # If enqueue fails, compensate and refund the consumed trial clip
         if consumed:
             UserRepo.refund_free_clip(user_id)
-        raise HTTPException(status_code=500, detail=f"Failed to queue render job: {e}")
+        raise HTTPException(status_code=500, detail="Failed to queue render job. Please try again.")
 
     remaining = max(0, settings.free_tier_limit - new_used) if is_free else None
     return {"status": "success", "job_id": job_id, "free_remaining": remaining}
@@ -92,7 +92,7 @@ async def list_partner_channels():
 @router.get("/job-status/{job_id}")
 async def get_job_status(job_id: str, user_id: str = Depends(require_user)):
     owner = await job_queue.get_owner(job_id)
-    if owner is not None and owner != user_id:
+    if owner is None or owner != user_id:
         raise HTTPException(status_code=404, detail="Job not found")
     return await job_queue.get_status(job_id)
 

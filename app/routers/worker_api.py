@@ -41,15 +41,19 @@ async def worker_ack(stream_id: str, job_id: str, user_id: str, token: str = "")
 @router.post("/complete")
 async def worker_complete(payload: JobCompletePayload, user_id: str, token: str = ""):
     _auth(user_id, token, purpose="complete")
+    # Verify the worker is completing the job it was assigned to
+    owner = await job_queue.get_owner(payload.job_id)
+    if owner is None or owner != user_id:
+        raise HTTPException(status_code=403, detail="Job does not belong to this worker.")
     await job_queue.set_status(payload.job_id, payload.status, 100, payload.message, payload.url)
     if payload.status in ("complete", "draft_ready"):
         ClipRepo.insert({
-            "user_id": user_id, "youtube_url": payload.url, "title": payload.title,
+            "user_id": owner, "youtube_url": payload.url, "title": payload.title,
             "niche": payload.niche, "views": 0,
             "status": "published" if payload.status == "complete" else "draft",
-            "attribution": payload.attribution,   # NEW — audit trail
-            "license": payload.license,            # NEW
-            "source_url": payload.source_url,      # NEW
+            "attribution": payload.attribution,
+            "license": payload.license,
+            "source_url": payload.source_url,
         })
     return {"status": "ok"}
 
@@ -72,7 +76,6 @@ async def get_youtube_creds(user_id: str, token: str = ""):
         "token": user.get("youtube_access_token"),
         "refresh_token": user.get("youtube_refresh_token"),
         "client_id": settings.google_client_id,
-        "client_secret": settings.google_client_secret,
         "user_id": user_id,
     }
 

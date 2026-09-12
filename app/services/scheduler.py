@@ -26,6 +26,7 @@ import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from ..config import get_settings
+from ..db import UserRepo
 from ..logging_conf import get_logger
 from ..redis_client import get_redis
 from . import job_queue
@@ -61,9 +62,22 @@ async def _trigger_autopost_jobs() -> None:
                 log.warning("Skipping auto-post for user %s: rights_confirmed is False", user_id)
                 continue
 
+            # Check quota for free-tier users before enqueueing
+            user = UserRepo.get_or_create(user_id)
+            is_free = user.get("license") == "free_tier"
+            if is_free:
+                try:
+                    allowed, _ = UserRepo.atomic_consume_free_clip(user_id, settings.free_tier_limit)
+                    if not allowed:
+                        log.warning("Skipping auto-post for user %s: free tier limit reached", user_id)
+                        continue
+                except Exception:
+                    log.warning("Skipping auto-post for user %s: quota check failed", user_id)
+                    continue
+
             await job_queue.enqueue({
-                "mode": "licensed_cc", "niche": niche, "user_id": user_id,
-                "is_auto_post": True, "auto_upload": True,
+                "mode": "public_domain", "niche": niche, "user_id": user_id,
+                "is_free_tier": is_free, "is_auto_post": True, "auto_upload": True,
                 "rights_confirmed": True,
             })
             log.info("Auto-post job queued for user %s (niche=%r)", user_id, niche)

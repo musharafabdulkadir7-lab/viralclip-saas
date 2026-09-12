@@ -54,8 +54,8 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
     payload = await request.body()
     try:
         event = stripe.Webhook.construct_event(payload, stripe_signature, settings.stripe_webhook_secret)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid signature or payload.")
 
     # IDEMPOTENCY: Stripe redelivers webhooks (network blips, non-2xx
     # responses, manual retries from the dashboard) and v2 applied every
@@ -75,11 +75,30 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
         tier = (session.get("metadata") or {}).get("tier", "pro")
         if user_id:
             UserRepo.update(user_id, {"license": tier})
-    elif event["type"] in ("customer.subscription.deleted", "customer.subscription.updated"):
+    elif event["type"] == "customer.subscription.deleted":
+        sub = event["data"]["object"]
+        user_id = (sub.get("metadata") or {}).get("user_id")
+        if user_id:
+            UserRepo.update(user_id, {"license": "free_tier"})
+    elif event["type"] == "customer.subscription.updated":
         sub = event["data"]["object"]
         status = sub.get("status")
         user_id = (sub.get("metadata") or {}).get("user_id")
-        if user_id and status in ("canceled", "unpaid", "incomplete_expired"):
+        if not user_id:
+            return {"status": "success"}
+        if status in ("canceled", "incomplete_expired"):
             UserRepo.update(user_id, {"license": "free_tier"})
+        elif status in ("active", "trialing", "past_due"):
+            # Re-activate or maintain the tier from metadata
+            tier = (sub.get("metadata") or {}).get("tier", "pro")
+            UserRepo.update(user_id, {"license": tier})
+    elif event["type"] == "invoice.paid":
+        # Re-activate after a lapse if payment succeeds
+        sub = event["data"]["object"].get("subscription")
+        if sub:
+            invoice_user_id = (event["data"]["object"].get("metadata") or {}).get("user_id")
+            if invoice_user_id:
+                tier = (event["data"]["object"].get("metadata") or {}).get("tier", "pro")
+                UserRepo.update(invoice_user_id, {"license": tier})
 
     return {"status": "success"}

@@ -73,13 +73,14 @@ async def get_owner(job_id: str) -> str | None:
 
 async def enqueue(payload: dict[str, Any]) -> str:
     r = get_redis()
+    if r is None:
+        raise RuntimeError("Job queue is unavailable (Redis not connected).")
     job_id = payload.get("job_id") or str(uuid.uuid4())
     payload["job_id"] = job_id
-    if r is not None:
-        await ensure_group()
-        await r.xadd(STREAM, {"data": json.dumps(payload)})
-        await set_status(job_id, "queued", 0, "Job queued for processing...")
-        await set_owner(job_id, payload.get("user_id", ""))
+    await ensure_group()
+    await r.xadd(STREAM, {"data": json.dumps(payload)})
+    await set_status(job_id, "queued", 0, "Job queued for processing...")
+    await set_owner(job_id, payload.get("user_id", ""))
     return job_id
 
 

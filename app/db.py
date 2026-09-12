@@ -112,9 +112,14 @@ class UserRepo:
             # Atomic conditional update: only increment if free_clips_used is still < limit
             up_res = db.table("users").update({"free_clips_used": used + 1}).eq("id", user_id).eq("free_clips_used", used).execute()
             if not up_res.data:
-                # Concurrent race lost: another request updated free_clips_used
+                # Concurrent race lost: re-check whether we're still under limit
                 refetch = db.table("users").select("free_clips_used").eq("id", user_id).execute()
                 latest_used = refetch.data[0]["free_clips_used"] if refetch.data else used + 1
+                if latest_used < limit:
+                    # Retry the conditional update with the fresh value
+                    retry_res = db.table("users").update({"free_clips_used": latest_used + 1}).eq("id", user_id).eq("free_clips_used", latest_used).execute()
+                    if retry_res.data:
+                        return True, latest_used + 1
                 return False, latest_used
 
             return True, used + 1
@@ -185,10 +190,10 @@ class InviteRepo:
         db = get_client()
         if not db:
             return False
-        res = db.table("invites").select("*").eq("token", token).eq("redeemed", False).execute()
-        if not res.data:
+        # Atomic conditional update: only update if still unredeemed
+        up_res = db.table("invites").update({"redeemed": True, "redeemed_by": user_id}).eq("token", token).eq("redeemed", False).execute()
+        if not up_res.data:
             return False
-        db.table("invites").update({"redeemed": True, "redeemed_by": user_id}).eq("token", token).execute()
         return True
 
 

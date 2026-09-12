@@ -79,16 +79,17 @@ async def generate_invite(request: Request, count: int = 1, _=Depends(verify_adm
 
 
 @router.get("/redeem/{token}")
-async def redeem_invite(token: str, response=None):
+async def redeem_invite(token: str):
     from fastapi.responses import RedirectResponse
     import uuid
     from ..security import issue_session_token, SESSION_COOKIE, SESSION_TTL_SEC
 
     new_user_id = f"user_{uuid.uuid4().hex[:8]}"
     UserRepo.get_or_create(new_user_id)
-    UserRepo.update(new_user_id, {"license": "pro"})
+    # Redeem FIRST — only grant pro if the invite is valid and unused
     if not InviteRepo.redeem(token, new_user_id):
         raise HTTPException(status_code=400, detail="Invalid or already used invite link.")
+    UserRepo.update(new_user_id, {"license": "pro"})
 
     token_val = issue_session_token(new_user_id)
     redir = RedirectResponse(url="/", status_code=302)
